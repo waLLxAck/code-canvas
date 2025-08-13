@@ -1,5 +1,6 @@
 ﻿import * as vscode from 'vscode';
 import * as fs from 'fs';
+import * as path from 'path';
 import { htmlForWebview, Graph } from './util';
 import { buildIndex, subgraph } from './graph';
 import { getChangedFiles, watchGitState } from './git';
@@ -7,6 +8,8 @@ import * as lsp from './lsp';
 
 let panel: vscode.WebviewPanel | undefined;
 let idxPromise: ReturnType<typeof buildIndex> | undefined;
+let lastSeeds: string[] = [];
+let lastCap: number = 0;
 
 export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
@@ -30,15 +33,31 @@ export function activate(context: vscode.ExtensionContext) {
             if (root && !idxPromise) idxPromise = buildIndex(root);
             const index = await idxPromise;
             if (!index) return;
-            const seeds = Array.from(index.nodes).filter(p => p.startsWith(folder));
+            const folderNorm = path.resolve(folder);
+            const seeds = Array.from(index.nodes).filter(p => isSubPath(folderNorm, p));
             if (!seeds.length) {
                 vscode.window.showInformationMessage('Code Canvas: No files found under selected folder.');
                 return;
             }
             const maxNodes: number = vscode.workspace.getConfiguration('codeCanvas').get('maxNodes') ?? 300;
-            const initialCapCfg: number = vscode.workspace.getConfiguration('codeCanvas').get('initialCap') ?? 60;
+            const initialCapCfg: number = vscode.workspace.getConfiguration('codeCanvas').get('initialCap') ?? 25;
             const cap = Math.min(maxNodes, initialCapCfg);
+            lastSeeds = seeds;
+            lastCap = cap;
             const g: Graph = subgraph(index, seeds, cap);
+            panel?.webview.postMessage({ type: 'graph', graph: g });
+        }),
+        vscode.commands.registerCommand('codeCanvas.loadMore', async () => {
+            await ensurePanel(context);
+            if (!lastSeeds.length) return;
+            const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            if (root && !idxPromise) idxPromise = buildIndex(root);
+            const index = await idxPromise;
+            if (!index) return;
+            const maxNodes: number = vscode.workspace.getConfiguration('codeCanvas').get('maxNodes') ?? 300;
+            const nextCap = Math.min(maxNodes, lastCap + 25);
+            lastCap = nextCap;
+            const g: Graph = subgraph(index, lastSeeds, nextCap);
             panel?.webview.postMessage({ type: 'graph', graph: g });
         })
     );
@@ -77,6 +96,18 @@ function openPanel(context: vscode.ExtensionContext) {
         switch (msg.type) {
             case 'requestGraph': await sendInitial(ws); break;
             case 'expand': await sendExpansion(msg.ids || []); break;
+            case 'loadMore': {
+                const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+                if (root && !idxPromise) idxPromise = buildIndex(root);
+                const index = await idxPromise;
+                if (!index || !lastSeeds.length) break;
+                const maxNodes: number = vscode.workspace.getConfiguration('codeCanvas').get('maxNodes') ?? 300;
+                const nextCap = Math.min(maxNodes, lastCap + 25);
+                lastCap = nextCap;
+                const g: Graph = subgraph(index, lastSeeds, nextCap);
+                panel?.webview.postMessage({ type: 'graph', graph: g });
+                break;
+            }
             case 'openFile': {
                 const uri = vscode.Uri.file(msg.path);
                 vscode.window.showTextDocument(uri, { preview: false });
@@ -141,7 +172,7 @@ async function sendInitial(ws?: string) {
     if (!ws) { panel.webview.postMessage({ type: 'empty', reason: 'no-workspace' }); return; }
 
     const maxNodes: number = vscode.workspace.getConfiguration('codeCanvas').get('maxNodes') ?? 300;
-    const initialCapCfg: number = vscode.workspace.getConfiguration('codeCanvas').get('initialCap') ?? 60;
+    const initialCapCfg: number = vscode.workspace.getConfiguration('codeCanvas').get('initialCap') ?? 25;
 
     // seeds = active editor + changed files
     const active = vscode.window.activeTextEditor?.document.uri.fsPath;
@@ -153,6 +184,8 @@ async function sendInitial(ws?: string) {
     panel.webview.postMessage({ type: 'progress', msg: null });
 
     const initialCap = Math.min(maxNodes, initialCapCfg);
+    lastSeeds = seeds;
+    lastCap = initialCap;
     const g: Graph = subgraph(index, seeds, initialCap);
     if (!g.nodes.length) panel.webview.postMessage({ type: 'empty', reason: 'no-matched-files' });
     else panel.webview.postMessage({ type: 'graph', graph: g });
@@ -184,8 +217,25 @@ function toUri(u: unknown): vscode.Uri | undefined {
             }
             return vscode.Uri.parse(s);
         }
-    } catch {}
+    } catch { }
     return undefined;
+}
+
+function isSubPath(parent: string, child: string): boolean {
+    try {
+        const parentNorm = path.resolve(parent);
+        const childNorm = path.resolve(child);
+        if (process.platform === 'win32') {
+            const p = parentNorm.replace(/[\\/]+$/, '') + path.sep; // ensure trailing sep
+            const c = childNorm;
+            return c.toLowerCase().startsWith(p.toLowerCase());
+        } else {
+            const p = parentNorm.endsWith(path.sep) ? parentNorm : parentNorm + path.sep;
+            return childNorm.startsWith(p);
+        }
+    } catch {
+        return false;
+    }
 }
 
 function safeRead(p: string, limit: number): string {

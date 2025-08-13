@@ -10,6 +10,7 @@ const PY_GLOB = ['**/*.py'];
 type Index = {
     nodes: Set<string>;
     imports: Map<string, Set<string>>; // file -> imported file paths (resolved)
+    importLines: Map<string, Map<string, number[]>>; // file -> (resolved -> lines)
     lang: Map<string, 'js' | 'ts' | 'py' | 'other'>;
 };
 
@@ -31,18 +32,25 @@ export async function buildIndex(root: string): Promise<Index> {
     }
 
     const imports = new Map<string, Set<string>>();
+    const importLines = new Map<string, Map<string, number[]>>();
     for (const f of files) {
         const src = safeRead(f);
-        const specs = lang.get(f) === 'py' ? parsePyImports(src) : parseJsTsImports(src);
+        const specs = lang.get(f) === 'py' ? parsePyImportsWithLines(src) : parseJsTsImportsWithLines(src);
         const targets = new Set<string>();
-        for (const s of specs) {
-            const r = lang.get(f) === 'py' ? resolvePy(root, f, s) : resolveJsTs(root, f, s);
-            if (r) targets.add(r);
+        const lineMap = new Map<string, number[]>();
+        for (const { spec, line } of specs) {
+            const r = lang.get(f) === 'py' ? resolvePy(root, f, spec) : resolveJsTs(root, f, spec);
+            if (!r) continue;
+            targets.add(r);
+            const arr = lineMap.get(r) || [];
+            arr.push(line);
+            lineMap.set(r, arr);
         }
         imports.set(f, targets);
+        importLines.set(f, lineMap);
     }
 
-    return { nodes: new Set(files), imports, lang };
+    return { nodes: new Set(files), imports, importLines, lang };
 }
 
 // Build a subgraph with BFS from seeds up to max nodes/edges.
@@ -86,11 +94,14 @@ export function subgraph(index: Index, seeds: string[], maxNodes: number): Graph
 
     const edges: Graph['edges'] = [];
     for (const s of seen) {
+        const lineMap = index.importLines.get(s) || new Map();
         for (const t of (index.imports.get(s) || new Set())) {
             if (seen.has(t)) {
                 const sid = nodeIdByPath.get(s)!;
                 const tid = nodeIdByPath.get(t)!;
-                edges.push({ id: `e_${hashString(s + '->' + t)}`, source: sid, target: tid, kind: 'import' });
+                const lines = lineMap.get(t) || [];
+                const sourceLine = lines.length ? lines[0] : undefined;
+                edges.push({ id: `e_${hashString(s + '->' + t + '#' + (sourceLine ?? -1))}`, source: sid, target: tid, kind: 'import', sourceLine });
             }
         }
     }
@@ -100,24 +111,41 @@ export function subgraph(index: Index, seeds: string[], maxNodes: number): Graph
 
 function safeRead(p: string) { try { return fs.readFileSync(p, 'utf8'); } catch { return ''; } }
 
-function parseJsTsImports(code: string): string[] {
-    const out: string[] = [];
-    const r1 = /import\s+[^'\"]+from\s+['\"]([^'\"]+)['\"]/g;
-    const r2 = /import\s+['\"]([^'\"]+)['\"]/g;
-    const r3 = /export\s+[^'\"]*\s+from\s+['\"]([^'\"]+)['\"]/g;
-    let m: RegExpExecArray | null;
-    for (const r of [r1, r2, r3]) while ((m = r.exec(code))) out.push(m[1]);
+function parseJsTsImportsWithLines(code: string): { spec: string; line: number }[] {
+    const out: { spec: string; line: number }[] = [];
+    const patterns = [
+        /import\s+[^'\"]+from\s+['\"]([^'\"]+)['\"]/g,
+        /import\s+['\"]([^'\"]+)['\"]/g,
+        /export\s+[^'\"]*\s+from\s+['\"]([^'\"]+)['\"]/g
+    ];
+    for (const r of patterns) {
+        let m: RegExpExecArray | null;
+        while ((m = r.exec(code))) {
+            const idx = m.index ?? 0;
+            const line = code.slice(0, idx).split('\n').length - 1;
+            out.push({ spec: m[1], line });
+        }
+    }
     return out;
 }
-function parsePyImports(code: string): string[] {
-    const out: string[] = [];
+function parsePyImportsWithLines(code: string): { spec: string; line: number }[] {
+    const out: { spec: string; line: number }[] = [];
     let m: RegExpExecArray | null;
     const r1 = /^\s*import\s+([\w\.]+)/gm;
     const r2 = /^\s*from\s+([\w\.]+)\s+import\s+[\w\*,\s]+/gm;
-    while ((m = r1.exec(code))) out.push(m[1]);
-    while ((m = r2.exec(code))) out.push(m[1]);
+    while ((m = r1.exec(code))) {
+        const idx = m.index ?? 0;
+        const line = code.slice(0, idx).split('\n').length - 1;
+        out.push({ spec: m[1], line });
+    }
+    while ((m = r2.exec(code))) {
+        const idx = m.index ?? 0;
+        const line = code.slice(0, idx).split('\n').length - 1;
+        out.push({ spec: m[1], line });
+    }
     return out;
 }
+
 function resolveJsTs(root: string, fromFile: string, spec: string): string | undefined {
     if (!spec.startsWith('.') && !spec.startsWith('/')) return; // skip packages
     const base = path.resolve(path.dirname(fromFile), spec);

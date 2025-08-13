@@ -13,6 +13,8 @@ export type GraphEdge = {
     source: string;
     target: string;
     kind: 'import' | 'call' | 'ref';
+    sourceLine?: number;
+    targetLine?: number;
 };
 
 export type Graph = { nodes: GraphNode[]; edges: GraphEdge[] };

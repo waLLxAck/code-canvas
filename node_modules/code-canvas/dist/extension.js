@@ -36,6 +36,7 @@ __export(extension_exports, {
 module.exports = __toCommonJS(extension_exports);
 var vscode5 = __toESM(require("vscode"));
 var fs3 = __toESM(require("fs"));
+var path2 = __toESM(require("path"));
 
 // src/util.ts
 var vscode = __toESM(require("vscode"));
@@ -70,17 +71,24 @@ async function buildIndex(root) {
     );
   }
   const imports = /* @__PURE__ */ new Map();
+  const importLines = /* @__PURE__ */ new Map();
   for (const f of files) {
     const src = safeRead(f);
-    const specs = lang.get(f) === "py" ? parsePyImports(src) : parseJsTsImports(src);
+    const specs = lang.get(f) === "py" ? parsePyImportsWithLines(src) : parseJsTsImportsWithLines(src);
     const targets = /* @__PURE__ */ new Set();
-    for (const s of specs) {
-      const r = lang.get(f) === "py" ? resolvePy(root, f, s) : resolveJsTs(root, f, s);
-      if (r) targets.add(r);
+    const lineMap = /* @__PURE__ */ new Map();
+    for (const { spec, line } of specs) {
+      const r = lang.get(f) === "py" ? resolvePy(root, f, spec) : resolveJsTs(root, f, spec);
+      if (!r) continue;
+      targets.add(r);
+      const arr = lineMap.get(r) || [];
+      arr.push(line);
+      lineMap.set(r, arr);
     }
     imports.set(f, targets);
+    importLines.set(f, lineMap);
   }
-  return { nodes: new Set(files), imports, lang };
+  return { nodes: new Set(files), imports, importLines, lang };
 }
 function subgraph(index, seeds, maxNodes) {
   const seen = /* @__PURE__ */ new Set();
@@ -123,11 +131,14 @@ function subgraph(index, seeds, maxNodes) {
   for (const n of nodes) nodeIdByPath.set(n.path, n.id);
   const edges = [];
   for (const s of seen) {
+    const lineMap = index.importLines.get(s) || /* @__PURE__ */ new Map();
     for (const t of index.imports.get(s) || /* @__PURE__ */ new Set()) {
       if (seen.has(t)) {
         const sid = nodeIdByPath.get(s);
         const tid = nodeIdByPath.get(t);
-        edges.push({ id: `e_${hashString(s + "->" + t)}`, source: sid, target: tid, kind: "import" });
+        const lines = lineMap.get(t) || [];
+        const sourceLine = lines.length ? lines[0] : void 0;
+        edges.push({ id: `e_${hashString(s + "->" + t + "#" + (sourceLine ?? -1))}`, source: sid, target: tid, kind: "import", sourceLine });
       }
     }
   }
@@ -140,22 +151,38 @@ function safeRead(p) {
     return "";
   }
 }
-function parseJsTsImports(code) {
+function parseJsTsImportsWithLines(code) {
   const out = [];
-  const r1 = /import\s+[^'\"]+from\s+['\"]([^'\"]+)['\"]/g;
-  const r2 = /import\s+['\"]([^'\"]+)['\"]/g;
-  const r3 = /export\s+[^'\"]*\s+from\s+['\"]([^'\"]+)['\"]/g;
-  let m;
-  for (const r of [r1, r2, r3]) while (m = r.exec(code)) out.push(m[1]);
+  const patterns = [
+    /import\s+[^'\"]+from\s+['\"]([^'\"]+)['\"]/g,
+    /import\s+['\"]([^'\"]+)['\"]/g,
+    /export\s+[^'\"]*\s+from\s+['\"]([^'\"]+)['\"]/g
+  ];
+  for (const r of patterns) {
+    let m;
+    while (m = r.exec(code)) {
+      const idx = m.index ?? 0;
+      const line = code.slice(0, idx).split("\n").length - 1;
+      out.push({ spec: m[1], line });
+    }
+  }
   return out;
 }
-function parsePyImports(code) {
+function parsePyImportsWithLines(code) {
   const out = [];
   let m;
   const r1 = /^\s*import\s+([\w\.]+)/gm;
   const r2 = /^\s*from\s+([\w\.]+)\s+import\s+[\w\*,\s]+/gm;
-  while (m = r1.exec(code)) out.push(m[1]);
-  while (m = r2.exec(code)) out.push(m[1]);
+  while (m = r1.exec(code)) {
+    const idx = m.index ?? 0;
+    const line = code.slice(0, idx).split("\n").length - 1;
+    out.push({ spec: m[1], line });
+  }
+  while (m = r2.exec(code)) {
+    const idx = m.index ?? 0;
+    const line = code.slice(0, idx).split("\n").length - 1;
+    out.push({ spec: m[1], line });
+  }
   return out;
 }
 function resolveJsTs(root, fromFile, spec) {
@@ -255,6 +282,8 @@ async function getDefinition(uri, position) {
 // src/extension.ts
 var panel;
 var idxPromise;
+var lastSeeds = [];
+var lastCap = 0;
 function activate(context) {
   context.subscriptions.push(
     vscode5.commands.registerCommand("codeCanvas.open", () => openPanel(context)),
@@ -277,15 +306,31 @@ function activate(context) {
       if (root && !idxPromise) idxPromise = buildIndex(root);
       const index = await idxPromise;
       if (!index) return;
-      const seeds = Array.from(index.nodes).filter((p) => p.startsWith(folder));
+      const folderNorm = path2.resolve(folder);
+      const seeds = Array.from(index.nodes).filter((p) => isSubPath(folderNorm, p));
       if (!seeds.length) {
         vscode5.window.showInformationMessage("Code Canvas: No files found under selected folder.");
         return;
       }
       const maxNodes = vscode5.workspace.getConfiguration("codeCanvas").get("maxNodes") ?? 300;
-      const initialCapCfg = vscode5.workspace.getConfiguration("codeCanvas").get("initialCap") ?? 60;
+      const initialCapCfg = vscode5.workspace.getConfiguration("codeCanvas").get("initialCap") ?? 25;
       const cap = Math.min(maxNodes, initialCapCfg);
+      lastSeeds = seeds;
+      lastCap = cap;
       const g = subgraph(index, seeds, cap);
+      panel?.webview.postMessage({ type: "graph", graph: g });
+    }),
+    vscode5.commands.registerCommand("codeCanvas.loadMore", async () => {
+      await ensurePanel(context);
+      if (!lastSeeds.length) return;
+      const root = vscode5.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (root && !idxPromise) idxPromise = buildIndex(root);
+      const index = await idxPromise;
+      if (!index) return;
+      const maxNodes = vscode5.workspace.getConfiguration("codeCanvas").get("maxNodes") ?? 300;
+      const nextCap = Math.min(maxNodes, lastCap + 25);
+      lastCap = nextCap;
+      const g = subgraph(index, lastSeeds, nextCap);
       panel?.webview.postMessage({ type: "graph", graph: g });
     })
   );
@@ -322,6 +367,18 @@ function openPanel(context) {
       case "expand":
         await sendExpansion(msg.ids || []);
         break;
+      case "loadMore": {
+        const root = vscode5.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (root && !idxPromise) idxPromise = buildIndex(root);
+        const index = await idxPromise;
+        if (!index || !lastSeeds.length) break;
+        const maxNodes = vscode5.workspace.getConfiguration("codeCanvas").get("maxNodes") ?? 300;
+        const nextCap = Math.min(maxNodes, lastCap + 25);
+        lastCap = nextCap;
+        const g = subgraph(index, lastSeeds, nextCap);
+        panel?.webview.postMessage({ type: "graph", graph: g });
+        break;
+      }
       case "openFile": {
         const uri = vscode5.Uri.file(msg.path);
         vscode5.window.showTextDocument(uri, { preview: false });
@@ -337,15 +394,15 @@ function openPanel(context) {
         break;
       }
       case "requestRefs": {
-        const { path: path2, line, character } = msg;
-        const uri = vscode5.Uri.file(path2);
+        const { path: path3, line, character } = msg;
+        const uri = vscode5.Uri.file(path3);
         const refs = await getReferences(uri, new vscode5.Position(line, character));
-        panel?.webview.postMessage({ type: "refs", at: { path: path2, line, character }, refs });
+        panel?.webview.postMessage({ type: "refs", at: { path: path3, line, character }, refs });
         break;
       }
       case "requestDefOpen": {
-        const { path: path2, line, character } = msg;
-        const fromUri = vscode5.Uri.file(path2);
+        const { path: path3, line, character } = msg;
+        const fromUri = vscode5.Uri.file(path3);
         const defs = await getDefinition(fromUri, new vscode5.Position(line, character));
         const loc = Array.isArray(defs) ? defs[0] : defs;
         if (loc) {
@@ -364,10 +421,10 @@ function openPanel(context) {
         break;
       }
       case "requestCode": {
-        const { path: path2 } = msg;
+        const { path: path3 } = msg;
         const maxBytes = vscode5.workspace.getConfiguration("codeCanvas").get("maxPreviewBytes") ?? 1e5;
-        const content = safeRead2(path2, maxBytes);
-        panel?.webview.postMessage({ type: "code", path: path2, content });
+        const content = safeRead2(path3, maxBytes);
+        panel?.webview.postMessage({ type: "code", path: path3, content });
         break;
       }
       case "requestCodeMany": {
@@ -387,7 +444,7 @@ async function sendInitial(ws) {
     return;
   }
   const maxNodes = vscode5.workspace.getConfiguration("codeCanvas").get("maxNodes") ?? 300;
-  const initialCapCfg = vscode5.workspace.getConfiguration("codeCanvas").get("initialCap") ?? 60;
+  const initialCapCfg = vscode5.workspace.getConfiguration("codeCanvas").get("initialCap") ?? 25;
   const active = vscode5.window.activeTextEditor?.document.uri.fsPath;
   const changed = (await getChangedFiles()).slice(0, 5);
   const seeds = Array.from(new Set([active, ...changed].filter(Boolean)));
@@ -395,6 +452,8 @@ async function sendInitial(ws) {
   const index = await (idxPromise ?? buildIndex(ws));
   panel.webview.postMessage({ type: "progress", msg: null });
   const initialCap = Math.min(maxNodes, initialCapCfg);
+  lastSeeds = seeds;
+  lastCap = initialCap;
   const g = subgraph(index, seeds, initialCap);
   if (!g.nodes.length) panel.webview.postMessage({ type: "empty", reason: "no-matched-files" });
   else panel.webview.postMessage({ type: "graph", graph: g });
@@ -427,6 +486,22 @@ function toUri(u) {
   } catch {
   }
   return void 0;
+}
+function isSubPath(parent, child) {
+  try {
+    const parentNorm = path2.resolve(parent);
+    const childNorm = path2.resolve(child);
+    if (process.platform === "win32") {
+      const p = parentNorm.replace(/[\\/]+$/, "") + path2.sep;
+      const c = childNorm;
+      return c.toLowerCase().startsWith(p.toLowerCase());
+    } else {
+      const p = parentNorm.endsWith(path2.sep) ? parentNorm : parentNorm + path2.sep;
+      return childNorm.startsWith(p);
+    }
+  } catch {
+    return false;
+  }
 }
 function safeRead2(p, limit) {
   try {

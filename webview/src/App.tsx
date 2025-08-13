@@ -15,6 +15,7 @@ export default function App() {
     const [graph, setGraph] = useState<{ nodes: any[]; edges: any[] }>({ nodes: [], edges: [] });
     const [nodes, setNodes] = useState<Node[]>([]);
     const [edges, setEdges] = useState<any[]>([]);
+    const [rawEdges, setRawEdges] = useState<any[]>([]);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [emptyMsg, setEmptyMsg] = useState<string | undefined>(undefined);
     const [progress, setProgress] = useState<string | undefined>(undefined);
@@ -26,6 +27,9 @@ export default function App() {
     const measuredSizeRef = useRef<Record<string, { width: number; height: number }>>({});
     const pendingMeasureRef = useRef<Record<string, { width: number; height: number }>>({});
     const rafCommitRef = useRef<number | null>(null);
+    const headerHeight = 30; // matches CSS: .code-card { height: calc(100% - 30px); }
+    const prePaddingTop = 8; // matches CSS: pre.hljs { padding: 8px 10px; }
+    const lineHeight = 16; // approx from font-size 12px and line-height 1.35
 
     function enqueueSizeUpdate(nodeId: string, size: { width: number; height: number }) {
         pendingMeasureRef.current[nodeId] = size;
@@ -64,6 +68,7 @@ export default function App() {
                 setEmptyMsg(undefined); setProgress(undefined); setGraph(msg.graph);
                 const paths = (msg.graph?.nodes || []).map((n: any) => n.path);
                 if (paths.length) vscode?.postMessage({ type: 'requestCodeMany', paths });
+                setRawEdges(msg.graph?.edges || []);
             }
             else if (msg.type === 'expandResult') mergeGraph(msg.graph);
             else if (msg.type === 'changedFiles') {
@@ -110,7 +115,14 @@ export default function App() {
             style: computeStyleFromContent(codeCacheRef.current[n.path] || ''),
             data: { label: n.label, preview: (<div className="preview">{n.path}</div>), path: n.path, lang: n.lang }
         }));
-        const e = graph.edges.map((e: any) => ({ id: e.id, source: e.source, target: e.target }));
+        const e = (graph.edges || []).map((e: any) => ({
+            id: e.id,
+            source: e.source,
+            target: e.target,
+            data: { sourceLine: e.sourceLine, targetLine: e.targetLine },
+            sourceHandle: (e.sourceLine ?? null) !== null && (e.sourceLine ?? undefined) !== undefined ? `line-${e.sourceLine}` : undefined,
+            targetHandle: (e.targetLine ?? null) !== null && (e.targetLine ?? undefined) !== undefined ? `line-${e.targetLine}` : undefined
+        }));
         setNodes(initial); setEdges(e);
     }, [graph]);
 
@@ -197,6 +209,14 @@ export default function App() {
         file: (p: any) => {
             const n = p.data;
             const content = codeCacheRef.current[n.path] ?? n.path;
+            const handleLines: number[] = (() => {
+                const s = new Set<number>();
+                for (const e of edges as any[]) {
+                    if (e.source === p.id && e.data?.sourceLine != null) s.add(e.data.sourceLine);
+                    if (e.target === p.id && e.data?.targetLine != null) s.add(e.data.targetLine);
+                }
+                return Array.from(s).sort((a, b) => a - b).slice(0, 200);
+            })();
             return (
                 <div className="file-node">
                     <div className="file-node-header" onDoubleClick={() => onOpenFile(p)}>{n.label}</div>
@@ -213,12 +233,30 @@ export default function App() {
                             enqueueSizeUpdate(p.id, { width, height });
                         }}
                     />
-                    <Handle type="source" position={Position.Right} />
-                    <Handle type="target" position={Position.Left} />
+                    {/* default center handles */}
+                    <Handle type="source" position={Position.Right} id={`line-0`} />
+                    <Handle type="target" position={Position.Left} id={`line-0`} />
+                    {/* per-line handles anchored by top offset */}
+                    {handleLines.map((ln) => (
+                        <React.Fragment key={ln}>
+                            <Handle
+                                type="source"
+                                position={Position.Right}
+                                id={`line-${ln}`}
+                                style={{ top: headerHeight + prePaddingTop + ln * lineHeight }}
+                            />
+                            <Handle
+                                type="target"
+                                position={Position.Left}
+                                id={`line-${ln}`}
+                                style={{ top: headerHeight + prePaddingTop + ln * lineHeight }}
+                            />
+                        </React.Fragment>
+                    ))}
                 </div>
             );
         }
-    }), []);
+    }), [edges]);
 
     return (
         <div className="root">
@@ -227,6 +265,7 @@ export default function App() {
                 <button onClick={() => layout('dagre')}>Dagre (⇧2)</button>
                 <button onClick={() => layout('elk')}>ELK (⇧3)</button>
                 <button onClick={() => layout('force')}>Force (⇧4)</button>
+                <button onClick={() => vscode?.postMessage({ type: 'loadMore' })}>Load 25 more</button>
                 <button onClick={() => vscode?.postMessage({ type: 'requestChanged' })}>Open Changed (⇧O)</button>
                 <button onClick={() => vscode?.postMessage({ type: 'requestGraph' })}>Reload</button>
                 <button onClick={expandSelection}>Expand (E)</button>
