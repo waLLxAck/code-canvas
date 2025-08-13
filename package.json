@@ -1,0 +1,21 @@
+{
+  "name": "code-canvas",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Code Canvas",
+  "main": "index.js",
+  "scripts": {
+    "build": "npm -w webview run build && npm -w extension run build",
+    "watch": "npm -w webview run dev & npm -w extension run watch",
+    "package": "npm -w extension run package"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "workspaces": [
+    "webview",
+    "extension"
+  ],
+  "overrides": {}
+}

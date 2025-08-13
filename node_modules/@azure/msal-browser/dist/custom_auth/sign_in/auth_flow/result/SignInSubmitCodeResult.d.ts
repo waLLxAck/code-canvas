@@ -1,0 +1,25 @@
+import { SignInSubmitCodeError } from "../error_type/SignInError.js";
+import { SignInCompletedState } from "../state/SignInCompletedState.js";
+import { SignInFailedState } from "../state/SignInFailedState.js";
+import { SignInSubmitCredentialResult } from "./SignInSubmitCredentialResult.js";
+export declare class SignInSubmitCodeResult extends SignInSubmitCredentialResult<SignInSubmitCodeError> {
+    /**
+     * Creates a new instance of SignInSubmitCodeResult with error data.
+     * @param error The error that occurred.
+     * @returns {SignInSubmitCodeResult} A new instance of SignInSubmitCodeResult with the error set.
+     */
+    static createWithError(error: unknown): SignInSubmitCodeResult;
+    /**
+     * Checks if the result is in a failed state.
+     */
+    isFailed(): this is SignInSubmitCodeResult & {
+        state: SignInFailedState;
+    };
+    /**
+     * Checks if the result is in a completed state.
+     */
+    isCompleted(): this is SignInSubmitCodeResult & {
+        state: SignInCompletedState;
+    };
+}
+//# sourceMappingURL=SignInSubmitCodeResult.d.ts.map

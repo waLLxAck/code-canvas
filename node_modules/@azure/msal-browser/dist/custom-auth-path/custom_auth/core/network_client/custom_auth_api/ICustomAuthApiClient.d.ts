@@ -1,0 +1,9 @@
+import { ResetPasswordApiClient } from "./ResetPasswordApiClient.js";
+import { SignupApiClient } from "./SignupApiClient.js";
+import { SignInApiClient } from "./SignInApiClient.js";
+export interface ICustomAuthApiClient {
+    signInApi: SignInApiClient;
+    signUpApi: SignupApiClient;
+    resetPasswordApi: ResetPasswordApiClient;
+}
+//# sourceMappingURL=ICustomAuthApiClient.d.ts.map

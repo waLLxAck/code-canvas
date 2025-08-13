@@ -1,0 +1,130 @@
+{
+    "name": "code-canvas",
+    "displayName": "Code Canvas",
+    "publisher": "code-canvas",
+    "version": "0.0.1",
+    "engines": {
+        "vscode": "^1.90.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "activationEvents": [
+        "onStartupFinished"
+    ],
+    "main": "dist/extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "codeCanvas.open",
+                "title": "Code Canvas: Open"
+            },
+            {
+                "command": "codeCanvas.openChanged",
+                "title": "Code Canvas: Open Changed Files"
+            },
+            {
+                "command": "codeCanvas.layout.custom",
+                "title": "Code Canvas: Layout – Custom"
+            },
+            {
+                "command": "codeCanvas.layout.dagre",
+                "title": "Code Canvas: Layout – Dagre"
+            },
+            {
+                "command": "codeCanvas.layout.elk",
+                "title": "Code Canvas: Layout – ELK"
+            },
+            {
+                "command": "codeCanvas.layout.force",
+                "title": "Code Canvas: Layout – Force"
+            },
+            {
+                "command": "codeCanvas.toggleRefs",
+                "title": "Code Canvas: Toggle Refs"
+            },
+            {
+                "command": "codeCanvas.seedFolder",
+                "title": "Code Canvas: Open Folder as Seed"
+            }
+        ],
+        "keybindings": [
+            {
+                "command": "codeCanvas.openChanged",
+                "key": "shift+o"
+            },
+            {
+                "command": "codeCanvas.layout.custom",
+                "key": "shift+1"
+            },
+            {
+                "command": "codeCanvas.layout.dagre",
+                "key": "shift+2"
+            },
+            {
+                "command": "codeCanvas.layout.elk",
+                "key": "shift+3"
+            },
+            {
+                "command": "codeCanvas.layout.force",
+                "key": "shift+4"
+            },
+            {
+                "command": "codeCanvas.toggleRefs",
+                "key": "r"
+            }
+        ],
+        "configuration": {
+            "title": "Code Canvas",
+            "properties": {
+                "codeCanvas.maxNodes": {
+                    "type": "number",
+                    "default": 300,
+                    "description": "Maximum nodes to render per subgraph."
+                },
+                "codeCanvas.excludeGlobs": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [
+                        "**/node_modules/**",
+                        "**/.venv/**",
+                        "**/__pycache__/**",
+                        "**/dist/**",
+                        "**/build/**",
+                        "**/.git/**"
+                    ],
+                    "description": "Extra glob patterns to exclude from indexing."
+                },
+                "codeCanvas.maxPreviewBytes": {
+                    "type": "number",
+                    "default": 100000,
+                    "description": "Maximum number of bytes of file content to send to the webview for preview per file."
+                },
+                "codeCanvas.initialCap": {
+                    "type": "number",
+                    "default": 60,
+                    "description": "Initial maximum number of nodes to show when first rendering a graph."
+                }
+            }
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run build",
+        "build": "tsup src/extension.ts --format cjs --dts --out-dir dist --external vscode",
+        "watch": "tsup src/extension.ts --watch --format cjs --out-dir dist",
+        "package": "vsce package"
+    },
+    "dependencies": {
+        "fast-glob": "^3.3.2",
+        "minimatch": "^9.0.5"
+    },
+    "devDependencies": {
+        "@types/node": "^24.2.1",
+        "@types/vscode": "^1.102.0",
+        "@vscode/vsce": "^3.6.0",
+        "tsup": "^8.5.0",
+        "typescript": "^5.6"
+    }
+}

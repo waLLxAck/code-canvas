@@ -1,0 +1,48 @@
+import { CustomAuthInteractionClientBase } from "../../core/interaction_client/CustomAuthInteractionClientBase.js";
+import { SignInStartParams, SignInResendCodeParams, SignInSubmitCodeParams, SignInSubmitPasswordParams, SignInContinuationTokenParams } from "./parameter/SignInParams.js";
+import { SignInCodeSendResult, SignInCompletedResult, SignInPasswordRequiredResult } from "./result/SignInActionResult.js";
+import { ICustomAuthApiClient } from "../../core/network_client/custom_auth_api/ICustomAuthApiClient.js";
+import { CustomAuthAuthority } from "../../core/CustomAuthAuthority.js";
+import { ICrypto, IPerformanceClient, Logger } from "@azure/msal-common/browser";
+import { BrowserConfiguration } from "../../../config/Configuration.js";
+import { BrowserCacheManager } from "../../../cache/BrowserCacheManager.js";
+import { EventHandler } from "../../../event/EventHandler.js";
+import { INavigationClient } from "../../../navigation/INavigationClient.js";
+export declare class SignInClient extends CustomAuthInteractionClientBase {
+    private readonly tokenResponseHandler;
+    constructor(config: BrowserConfiguration, storageImpl: BrowserCacheManager, browserCrypto: ICrypto, logger: Logger, eventHandler: EventHandler, navigationClient: INavigationClient, performanceClient: IPerformanceClient, customAuthApiClient: ICustomAuthApiClient, customAuthAuthority: CustomAuthAuthority);
+    /**
+     * Starts the signin flow.
+     * @param parameters The parameters required to start the sign-in flow.
+     * @returns The result of the sign-in start operation.
+     */
+    start(parameters: SignInStartParams): Promise<SignInPasswordRequiredResult | SignInCodeSendResult>;
+    /**
+     * Resends the code for sign-in flow.
+     * @param parameters The parameters required to resend the code.
+     * @returns The result of the sign-in resend code action.
+     */
+    resendCode(parameters: SignInResendCodeParams): Promise<SignInCodeSendResult>;
+    /**
+     * Submits the code for sign-in flow.
+     * @param parameters The parameters required to submit the code.
+     * @returns The result of the sign-in submit code action.
+     */
+    submitCode(parameters: SignInSubmitCodeParams): Promise<SignInCompletedResult>;
+    /**
+     * Submits the password for sign-in flow.
+     * @param parameters The parameters required to submit the password.
+     * @returns The result of the sign-in submit password action.
+     */
+    submitPassword(parameters: SignInSubmitPasswordParams): Promise<SignInCompletedResult>;
+    /**
+     * Signs in with continuation token.
+     * @param parameters The parameters required to sign in with continuation token.
+     * @returns The result of the sign-in complete action.
+     */
+    signInWithContinuationToken(parameters: SignInContinuationTokenParams): Promise<SignInCompletedResult>;
+    private performTokenRequest;
+    private performChallengeRequest;
+    private getPublicApiIdBySignInScenario;
+}
+//# sourceMappingURL=SignInClient.d.ts.map

@@ -1,0 +1,22 @@
+﻿{
+    "compilerOptions": {
+        "target": "ES2022",
+        "lib": [
+            "ES2022"
+        ],
+        "module": "ESNext",
+        "moduleResolution": "Node",
+        "strict": true,
+        "allowSyntheticDefaultImports": true,
+        "skipLibCheck": true,
+        "outDir": "dist",
+        "rootDir": "src",
+        "types": [
+            "vscode",
+            "node"
+        ]
+    },
+    "include": [
+        "src/**/*.ts"
+    ]
+}
