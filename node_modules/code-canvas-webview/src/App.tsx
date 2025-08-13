@@ -23,6 +23,7 @@ export default function App() {
     const [showRefs, setShowRefs] = useState(true);
     const [wrap, setWrap] = useState(false);
     const [showEdges, setShowEdges] = useState(true);
+    const [focusIds, setFocusIds] = useState<Set<string> | null>(null);
     const codeCacheRef = useRef<Record<string, string>>({});
     const measuredSizeRef = useRef<Record<string, { width: number; height: number }>>({});
     const pendingMeasureRef = useRef<Record<string, { width: number; height: number }>>({});
@@ -194,12 +195,50 @@ export default function App() {
         if (!showRefs) return;
         vscode?.postMessage({ type: 'requestRefs', path, line, character, token });
         vscode?.postMessage({ type: 'requestDefOpen', path, line, character });
+        // Focus connected nodes to the clicked file
+        const base = nodes.find(n => n.data.path === path);
+        if (base) focusNodesForId(base.id);
     }
 
     function expandSelection() {
         const ids = selectedIds.length ? selectedIds : (nodes as any).filter((n: any) => n.selected).map((n: any) => n.id);
         if (ids.length) vscode?.postMessage({ type: 'expand', ids });
     }
+
+    function focusNodesForId(baseId: string) {
+        const neighborIds = new Set<string>([baseId]);
+        for (const e of edges as any[]) {
+            if (e.source === baseId) neighborIds.add(e.target);
+            if (e.target === baseId) neighborIds.add(e.source);
+        }
+        // Build vertical positions for focus lane
+        const order: string[] = [baseId, ...Array.from(neighborIds).filter(id => id !== baseId).sort()];
+        let currentY = 60;
+        const x = 40;
+        const spacing = 20;
+        const nextPos = new Map<string, { x: number; y: number }>();
+        for (const id of order) {
+            const n = nodes.find(n => n.id === id);
+            const h = (n?.style?.height ?? measuredSizeRef.current[id]?.height ?? 280);
+            nextPos.set(id, { x, y: currentY });
+            currentY += h + spacing;
+        }
+        setFocusIds(new Set(neighborIds));
+        setNodes(prev => prev.map(n => {
+            const inFocus = neighborIds.has(n.id);
+            const pos = nextPos.get(n.id);
+            if (inFocus && pos) {
+                return { ...n, position: pos, data: { ...n.data, dim: false } } as any;
+            }
+            return { ...n, data: { ...n.data, dim: true } } as any;
+        }));
+    }
+
+    function clearFocus() {
+        setFocusIds(null);
+        setNodes(prev => prev.map(n => ({ ...n, data: { ...n.data, dim: false } } as any)));
+    }
+
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => { if ((e.key === 'e' || e.key === 'E')) expandSelection(); };
         window.addEventListener('keydown', onKey);
@@ -221,7 +260,7 @@ export default function App() {
                 return Array.from(s).sort((a, b) => a - b).slice(0, 200);
             })();
             return (
-                <div className="file-node">
+                <div className="file-node" style={{ opacity: n.dim ? 0.25 : 1 }}>
                     <div className="file-node-header" onDoubleClick={() => onOpenFile(p)}>{n.label}</div>
                     <CodeCard
                         file={n.path}
@@ -283,12 +322,14 @@ export default function App() {
                 <button onClick={() => setShowEdges(s => !s)}>{showEdges ? 'Hide Edges' : 'Show Edges'}</button>
                 <button onClick={() => vscode?.postMessage({ type: 'toggleEdges' })}>Toggle Edges (Global)</button>
                 <button onClick={() => vscode?.postMessage({ type: 'seedFolder' })}>Seed Folder…</button>
+                {focusIds ? (<button onClick={clearFocus}>Clear Focus</button>) : null}
             </div>
             <ReactFlow
                 nodes={nodes as any}
-                edges={showEdges ? edges : []}
+                edges={showEdges ? (focusIds ? (edges as any[]).filter(e => focusIds.has(e.source) && focusIds.has(e.target)) : edges) : []}
                 nodeTypes={nodeTypesLocal as any}
                 fitView
+                onNodeClick={(_e, node: any) => focusNodesForId(node.id)}
                 onEdgeClick={(_e, edge: any) => {
                     const sl = edge?.data?.sourceLine;
                     const tl = edge?.data?.targetLine;
@@ -302,6 +343,8 @@ export default function App() {
                     }
                     // Force a refresh to pass updated props
                     setNodes(n => [...n]);
+                    // Also focus on the edge's source node to reorganize
+                    if (edge?.source) focusNodesForId(edge.source);
                 }}
                 onSelectionChange={(p: any) => setSelectedIds((p?.nodes || []).map((n: any) => n.id))}
                 minZoom={0.02}
