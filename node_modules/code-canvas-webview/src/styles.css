@@ -70,6 +70,15 @@ pre.hljs {
     line-height: 1.35;
 }
 
+pre.hljs .code-line {
+    display: block;
+}
+
+pre.hljs .code-line.highlight {
+    background: rgba(255, 214, 10, 0.15);
+    outline: 1px solid rgba(255, 214, 10, 0.35);
+}
+
 pre.hljs.wrap {
     white-space: pre-wrap;
 }

@@ -30,6 +30,9 @@ export default function App() {
     const headerHeight = 30; // matches CSS: .code-card { height: calc(100% - 30px); }
     const prePaddingTop = 8; // matches CSS: pre.hljs { padding: 8px 10px; }
     const lineHeight = 16; // approx from font-size 12px and line-height 1.35
+    const linePosRef = useRef<Record<string, { line: number; top: number }[]>>({});
+    const highlightRef = useRef<Record<string, number | undefined>>({});
+    const scrollRef = useRef<Record<string, number | undefined>>({});
 
     function enqueueSizeUpdate(nodeId: string, size: { width: number; height: number }) {
         pendingMeasureRef.current[nodeId] = size;
@@ -226,6 +229,9 @@ export default function App() {
                         content={content}
                         onTokenClick={onTokenClick}
                         wrap={wrap}
+                        highlightLine={highlightRef.current[p.id]}
+                        scrollToLine={scrollRef.current[p.id]}
+                        onLinePositions={(positions) => { linePosRef.current[p.id] = positions; }}
                         onMeasured={({ width, height }) => {
                             const last = measuredSizeRef.current[p.id];
                             if (last && last.width === width && last.height === height) return;
@@ -237,22 +243,25 @@ export default function App() {
                     <Handle type="source" position={Position.Right} id={`line-0`} />
                     <Handle type="target" position={Position.Left} id={`line-0`} />
                     {/* per-line handles anchored by top offset */}
-                    {handleLines.map((ln) => (
-                        <React.Fragment key={ln}>
-                            <Handle
-                                type="source"
-                                position={Position.Right}
-                                id={`line-${ln}`}
-                                style={{ top: headerHeight + prePaddingTop + ln * lineHeight }}
-                            />
-                            <Handle
-                                type="target"
-                                position={Position.Left}
-                                id={`line-${ln}`}
-                                style={{ top: headerHeight + prePaddingTop + ln * lineHeight }}
-                            />
-                        </React.Fragment>
-                    ))}
+                    {handleLines.map((ln) => {
+                        const top = (linePosRef.current[p.id]?.find(x => x.line === ln)?.top) ?? (headerHeight + prePaddingTop + ln * lineHeight);
+                        return (
+                            <React.Fragment key={ln}>
+                                <Handle
+                                    type="source"
+                                    position={Position.Right}
+                                    id={`line-${ln}`}
+                                    style={{ top }}
+                                />
+                                <Handle
+                                    type="target"
+                                    position={Position.Left}
+                                    id={`line-${ln}`}
+                                    style={{ top }}
+                                />
+                            </React.Fragment>
+                        );
+                    })}
                 </div>
             );
         }
@@ -280,6 +289,20 @@ export default function App() {
                 edges={showEdges ? edges : []}
                 nodeTypes={nodeTypesLocal as any}
                 fitView
+                onEdgeClick={(_e, edge: any) => {
+                    const sl = edge?.data?.sourceLine;
+                    const tl = edge?.data?.targetLine;
+                    if (edge?.source) {
+                        highlightRef.current[edge.source] = sl;
+                        scrollRef.current[edge.source] = sl;
+                    }
+                    if (edge?.target) {
+                        highlightRef.current[edge.target] = tl;
+                        scrollRef.current[edge.target] = tl;
+                    }
+                    // Force a refresh to pass updated props
+                    setNodes(n => [...n]);
+                }}
                 onSelectionChange={(p: any) => setSelectedIds((p?.nodes || []).map((n: any) => n.id))}
                 minZoom={0.02}
                 maxZoom={8}
