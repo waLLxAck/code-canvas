@@ -514,7 +514,7 @@ export default function App() {
                     rfInstanceRef.current = inst;
                     try {
                         const vp = inst?.getViewport?.();
-                        const el = document.querySelector('.react-flow__viewport') as HTMLElement | null;
+                        const el = document.querySelector('.react-flow') as HTMLElement | null;
                         const rect = el?.getBoundingClientRect();
                         if (vp && rect) {
                             setZoomLevel(vp.zoom);
@@ -538,15 +538,10 @@ export default function App() {
                 }}
                 onMove={(_evt, vp) => {
                     try {
-                        const bounds = rfInstanceRef.current?.getViewport?.();
                         if (vp && typeof vp.zoom === 'number') setZoomLevel(vp.zoom);
-                        const el = document.querySelector('.react-flow__viewport') as HTMLElement | null;
-                        const wrap = el?.getBoundingClientRect();
-                        if (wrap && vp) {
-                            const vw = wrap.width / vp.zoom;
-                            const vh = wrap.height / vp.zoom;
-                            setViewportBox({ x: -vp.x / vp.zoom, y: -vp.y / vp.zoom, width: vw, height: vh });
-                        }
+                        const el = document.querySelector('.react-flow') as HTMLElement | null;
+                        const rect = el?.getBoundingClientRect();
+                        if (rect && vp) setViewportBox({ x: -vp.x / vp.zoom, y: -vp.y / vp.zoom, width: rect.width / vp.zoom, height: rect.height / vp.zoom });
                         if (vp) viewportRef.current = { x: vp.x, y: vp.y, zoom: vp.zoom };
                     } catch { }
                 }}
