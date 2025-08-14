@@ -238,10 +238,9 @@ function isSubPath(parent: string, child: string): boolean {
     }
 }
 
-function safeRead(p: string, limit: number): string {
+function safeRead(p: string, _limit: number): string {
     try {
-        const buf = fs.readFileSync(p, 'utf8');
-        return buf.length > limit ? (buf.slice(0, limit) + "\n// ... truncated ...") : buf;
+        return fs.readFileSync(p, 'utf8');
     } catch {
         return '';
     }

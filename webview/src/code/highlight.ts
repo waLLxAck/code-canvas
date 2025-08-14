@@ -12,10 +12,7 @@ hljs.registerLanguage('plaintext', plaintext);
 export function highlight(code: string, lang: 'ts' | 'js' | 'py' | 'other') {
     const mapped = lang === 'ts' ? 'typescript' : lang === 'js' ? 'javascript' : lang === 'py' ? 'python' : 'plaintext';
     try {
-        if (!hljs.getLanguage(mapped)) {
-            return hljs.highlightAuto(code).value;
-        }
-        return hljs.highlight(code, { language: mapped }).value;
+        return hljs.highlight(code, { language: mapped, ignoreIllegals: true }).value;
     } catch {
         return hljs.highlightAuto(code).value;
     }

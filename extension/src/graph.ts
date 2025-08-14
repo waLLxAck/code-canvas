@@ -101,7 +101,8 @@ export function subgraph(index: Index, seeds: string[], maxNodes: number): Graph
                 const tid = nodeIdByPath.get(t)!;
                 const lines = lineMap.get(t) || [];
                 const sourceLine = lines.length ? lines[0] : undefined;
-                edges.push({ id: `e_${hashString(s + '->' + t + '#' + (sourceLine ?? -1))}`, source: sid, target: tid, kind: 'import', sourceLine });
+                const targetLine = 0; // fallback: start of file
+                edges.push({ id: `e_${hashString(s + '->' + t + '#' + (sourceLine ?? -1))}`, source: sid, target: tid, kind: 'import', sourceLine, targetLine });
             }
         }
     }

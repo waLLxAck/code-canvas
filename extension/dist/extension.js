@@ -138,7 +138,8 @@ function subgraph(index, seeds, maxNodes) {
         const tid = nodeIdByPath.get(t);
         const lines = lineMap.get(t) || [];
         const sourceLine = lines.length ? lines[0] : void 0;
-        edges.push({ id: `e_${hashString(s + "->" + t + "#" + (sourceLine ?? -1))}`, source: sid, target: tid, kind: "import", sourceLine });
+        const targetLine = 0;
+        edges.push({ id: `e_${hashString(s + "->" + t + "#" + (sourceLine ?? -1))}`, source: sid, target: tid, kind: "import", sourceLine, targetLine });
       }
     }
   }
@@ -503,10 +504,9 @@ function isSubPath(parent, child) {
     return false;
   }
 }
-function safeRead2(p, limit) {
+function safeRead2(p, _limit) {
   try {
-    const buf = fs3.readFileSync(p, "utf8");
-    return buf.length > limit ? buf.slice(0, limit) + "\n// ... truncated ..." : buf;
+    return fs3.readFileSync(p, "utf8");
   } catch {
     return "";
   }

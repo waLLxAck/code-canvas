@@ -173,6 +173,9 @@ export default function App() {
             }));
             return [...prev, ...add];
         });
+        if (paths && paths.length) {
+            vscode?.postMessage({ type: 'requestCodeMany', paths });
+        }
     }
 
     async function layout(algo: 'custom' | 'dagre' | 'elk' | 'force') {
@@ -331,8 +334,8 @@ export default function App() {
                 fitView
                 onNodeClick={(_e, node: any) => focusNodesForId(node.id)}
                 onEdgeClick={(_e, edge: any) => {
-                    const sl = edge?.data?.sourceLine;
-                    const tl = edge?.data?.targetLine;
+                    const sl = (edge?.data?.sourceLine ?? 0);
+                    const tl = (edge?.data?.targetLine ?? 0);
                     if (edge?.source) {
                         highlightRef.current[edge.source] = sl;
                         scrollRef.current[edge.source] = sl;
