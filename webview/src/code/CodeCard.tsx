@@ -1,5 +1,10 @@
-﻿import React, { useLayoutEffect, useMemo, useRef } from 'react';
+﻿import React, { useLayoutEffect, useMemo, useRef, useImperativeHandle } from 'react';
 import { highlight } from './highlight';
+
+export type CodeCardHandle = {
+    highlight: (line: number) => void;
+    scrollTo: (line: number) => void;
+};
 
 function wrapHighlightedHtmlPreserveLines(highlightedHtml: string): string {
     const container = document.createElement('div');
@@ -70,10 +75,17 @@ function wrapHighlightedHtmlPreserveLines(highlightedHtml: string): string {
         .join('');
 }
 
-export default function CodeCard({ file, lang, content, onTokenClick, onMeasured, wrap, onLinePositions, highlightLine, scrollToLine }: {
-    file: string; lang: 'ts' | 'js' | 'py' | 'other'; content: string; onTokenClick: (payload: { path: string; line: number; character: number; token: string }) => void; onMeasured?: (size: { width: number; height: number }) => void; wrap?: boolean;
-    onLinePositions?: (positions: { line: number; top: number }[]) => void; highlightLine?: number; scrollToLine?: number;
-}) {
+type Props = {
+    file: string;
+    lang: 'ts' | 'js' | 'py' | 'other';
+    content: string;
+    onTokenClick: (payload: { path: string; line: number; character: number; token: string }) => void;
+    onMeasured?: (size: { width: number; height: number }) => void;
+    wrap?: boolean;
+    onLinePositions?: (positions: { line: number; top: number }[]) => void;
+};
+
+function CodeCardInner({ file, lang, content, onTokenClick, onMeasured, wrap, onLinePositions }: Props, ref: React.Ref<CodeCardHandle>) {
     const effectiveLang = useMemo<'ts' | 'js' | 'py' | 'other'>(() => {
         if (lang && lang !== 'other') return lang;
         const lower = (file || '').toLowerCase();
@@ -87,6 +99,7 @@ export default function CodeCard({ file, lang, content, onTokenClick, onMeasured
     const html = useMemo(() => wrapHighlightedHtmlPreserveLines(rawHtml), [rawHtml]);
     const preRef = useRef<HTMLPreElement | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
+    const lastHighlightedRef = useRef<number | undefined>(undefined);
 
     useLayoutEffect(() => {
         const el = preRef.current;
@@ -124,32 +137,35 @@ export default function CodeCard({ file, lang, content, onTokenClick, onMeasured
 
     useLayoutEffect(() => { computeLinePositions(); }, [html]);
 
-    useLayoutEffect(() => {
-        if (highlightLine == null) return;
-        const pre = preRef.current;
-        const container = containerRef.current;
-        if (!pre || !container) return;
-        const all = pre.querySelectorAll('.code-line.highlight');
-        all.forEach(n => n.classList.remove('highlight'));
-        const target = pre.querySelector(`.code-line[data-line="${highlightLine}"]`) as HTMLElement | null;
-        if (target) {
-            target.classList.add('highlight');
+    useImperativeHandle(ref, () => ({
+        highlight: (line: number) => {
+            try {
+                const pre = preRef.current;
+                if (!pre) return;
+                const all = pre.querySelectorAll('.code-line.highlight');
+                all.forEach(n => n.classList.remove('highlight'));
+                const target = pre.querySelector(`.code-line[data-line="${line}"]`) as HTMLElement | null;
+                if (target) {
+                    target.classList.add('highlight');
+                    lastHighlightedRef.current = line;
+                }
+            } catch { }
+        },
+        scrollTo: (line: number) => {
+            try {
+                const pre = preRef.current;
+                const container = containerRef.current;
+                if (!pre || !container) return;
+                const target = pre.querySelector(`.code-line[data-line="${line}"]`) as HTMLElement | null;
+                if (target) {
+                    const preTop = (pre as HTMLElement).offsetTop;
+                    const targetTop = target.offsetTop;
+                    const desired = preTop + targetTop - (container.clientHeight / 2) + (target.offsetHeight / 2);
+                    container.scrollTo({ top: Math.max(0, desired), behavior: 'auto' });
+                }
+            } catch { }
         }
-    }, [highlightLine]);
-
-    useLayoutEffect(() => {
-        if (scrollToLine == null) return;
-        const pre = preRef.current;
-        const container = containerRef.current;
-        if (!pre || !container) return;
-        const target = pre.querySelector(`.code-line[data-line="${scrollToLine}"]`) as HTMLElement | null;
-        if (target) {
-            const preTop = (pre as HTMLElement).offsetTop;
-            const targetTop = target.offsetTop;
-            const desired = preTop + targetTop - (container.clientHeight / 2) + (target.offsetHeight / 2);
-            container.scrollTo({ top: Math.max(0, desired), behavior: 'auto' });
-        }
-    }, [scrollToLine]);
+    }), []);
 
     const onClick: React.MouseEventHandler<HTMLPreElement> = () => {
         const sel = window.getSelection();
@@ -177,3 +193,12 @@ export default function CodeCard({ file, lang, content, onTokenClick, onMeasured
         </div>
     );
 }
+
+const CodeCard = React.memo(React.forwardRef(CodeCardInner), (prev, next) => (
+    prev.file === next.file &&
+    prev.content === next.content &&
+    prev.wrap === next.wrap &&
+    prev.lang === next.lang
+));
+
+export default CodeCard;

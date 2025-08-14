@@ -426,11 +426,13 @@ export default function App() {
         return !(nx2 < vx1 || nx1 > vx2 || ny2 < vy1 || ny1 > vy2);
     }
 
+    const codeRefs = useRef<Record<string, React.RefObject<import('./code/CodeCard').CodeCardHandle>>>({});
     const nodeTypesLocal = useMemo(() => ({
         file: (p: any) => {
             const n = p.data;
             const content = codeCacheRef.current[n.path] ?? n.path;
             const shouldShowCode = zoomLevel >= VISIBLE_ZOOM_THRESHOLD && isNodeVisible(p);
+            if (!codeRefs.current[p.id]) codeRefs.current[p.id] = React.createRef();
             const handleLines: number[] = (() => {
                 const s = new Set<number>();
                 for (const e of edges as any[]) {
@@ -444,14 +446,13 @@ export default function App() {
                     <div className="file-node-header" onDoubleClick={() => onOpenFile(p)}>{n.label}</div>
                     {shouldShowCode ? (
                         <CodeCard
+                            ref={codeRefs.current[p.id]}
                             key={n.path}
                             file={n.path}
                             lang={n.lang}
                             content={content}
                             onTokenClick={onTokenClick}
                             wrap={wrap}
-                            highlightLine={highlightRef.current[p.id]}
-                            scrollToLine={scrollRef.current[p.id]}
                             onLinePositions={(positions) => { linePosRef.current[p.id] = positions; }}
                             onMeasured={({ width, height }) => {
                                 const last = measuredSizeRef.current[p.id];
@@ -489,7 +490,7 @@ export default function App() {
                 </div>
             );
         }
-    }), [edges, zoomLevel, viewportBox]);
+    }), [edges, zoomLevel, viewportBox, wrap]);
 
     return (
         <div className="root">
@@ -550,12 +551,18 @@ export default function App() {
                     const sl = (edge?.data?.sourceLine ?? 0);
                     const tl = (edge?.data?.targetLine ?? 0);
                     if (edge?.source) {
-                        highlightRef.current[edge.source] = sl;
-                        scrollRef.current[edge.source] = sl;
+                        try {
+                            const ref = codeRefs.current[edge.source];
+                            ref?.current?.highlight(sl);
+                            ref?.current?.scrollTo(sl);
+                        } catch { }
                     }
                     if (edge?.target) {
-                        highlightRef.current[edge.target] = tl;
-                        scrollRef.current[edge.target] = tl;
+                        try {
+                            const ref = codeRefs.current[edge.target];
+                            ref?.current?.highlight(tl);
+                            ref?.current?.scrollTo(tl);
+                        } catch { }
                     }
                     elevateEdgePair(edge);
                 }}
