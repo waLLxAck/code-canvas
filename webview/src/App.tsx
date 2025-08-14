@@ -485,6 +485,18 @@ export default function App() {
                 nodeTypes={nodeTypesLocal as any}
                 onInit={(inst) => { rfInstanceRef.current = inst; }}
                 onNodeClick={(_e, node: any) => { setFocusIds(null); }}
+                onNodeDragStart={(_evt, node) => {
+                    try {
+                        const el = document.querySelector(`.react-flow__node[data-id="${node.id}"]`);
+                        el?.classList.add('no-animate');
+                    } catch { }
+                }}
+                onNodeDragStop={(_evt, node) => {
+                    try {
+                        const el = document.querySelector(`.react-flow__node[data-id="${node.id}"]`);
+                        el?.classList.remove('no-animate');
+                    } catch { }
+                }}
                 onEdgeClick={(_e, edge: any) => {
                     const sl = (edge?.data?.sourceLine ?? 0);
                     const tl = (edge?.data?.targetLine ?? 0);

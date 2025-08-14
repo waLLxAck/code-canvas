@@ -529,6 +529,23 @@ pre.hljs.wrap {
 .react-flow__renderer,
 .react-flow__viewport {
     will-change: transform;
+}
+
+/* Smooth node transitions for layout/elevation changes */
+.react-flow__node {
+	transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 160ms ease;
+	will-change: transform;
+}
+
+/* Disable transition while dragging to keep the interaction snappy */
+.react-flow__node.no-animate {
+	transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.react-flow__node {
+		transition: none !important;
+	}
 }pre code.hljs {
   display: block;
   overflow-x: auto;
