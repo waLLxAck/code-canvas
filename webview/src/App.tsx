@@ -3,7 +3,6 @@ import ReactFlow, { Background, Controls, MiniMap, Handle, Position, applyNodeCh
 import 'reactflow/dist/style.css';
 import { nodeTypes } from './reactflow-node-types';
 import CodeCard from './code/CodeCard';
-import { dagreLayout, elkLayout } from './layout';
 
 // VS Code webview API
 declare global { interface Window { acquireVsCodeApi: any; __CODE_CACHE?: Record<string, string> } }
@@ -21,7 +20,7 @@ export default function App() {
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [emptyMsg, setEmptyMsg] = useState<string | undefined>(undefined);
     const [progress, setProgress] = useState<string | undefined>(undefined);
-    const lastAlgo = useRef<'custom' | 'dagre' | 'elk' | 'force'>('elk');
+    const lastAlgo = useRef<'horizontal'>('horizontal');
     const [showRefs, setShowRefs] = useState(true);
     const [wrap, setWrap] = useState(false);
     const [showEdges, setShowEdges] = useState(true);
@@ -83,7 +82,7 @@ export default function App() {
             } else if (msg.type === 'openChanged') {
                 openFiles(msg.files);
             } else if (msg.type === 'layout') {
-                layout(msg.algo);
+                layout('horizontal');
             } else if (msg.type === 'toggleRefs') {
                 setShowRefs(s => !s);
             } else if (msg.type === 'toggleEdges') {
@@ -187,7 +186,7 @@ export default function App() {
         if (autoLayoutTimer.current) {
             window.clearTimeout(autoLayoutTimer.current);
         }
-        autoLayoutTimer.current = window.setTimeout(() => { layout('elk'); }, 250);
+        autoLayoutTimer.current = window.setTimeout(() => { layout('horizontal'); }, 250);
     }
 
     // Track pending code loads and run one layout after all code in a batch has loaded
@@ -201,7 +200,7 @@ export default function App() {
         }
         // Give the DOM a moment so CodeCard measurements propagate before layout
         afterFullLoadLayoutTimer.current = window.setTimeout(() => {
-            layout('elk');
+            layout('horizontal');
             afterFullLoadLayoutTimer.current = null;
         }, 120);
     }
@@ -232,15 +231,20 @@ export default function App() {
         if (any) maybeRunLayoutAfterFullLoad();
     }
 
-    async function layout(algo: 'custom' | 'dagre' | 'elk' | 'force') {
-        lastAlgo.current = algo;
-        const currentNodes = nodesRef.current as any;
-        const currentEdges = edgesRef.current as any;
-        if (algo === 'dagre') setNodes(await dagreLayout(currentNodes, currentEdges) as any);
-        else if (algo === 'elk') setNodes(await elkLayout(currentNodes, currentEdges) as any);
-        else if (algo === 'force') {
-            setNodes((currentNodes as any).map((n: any, i: number) => ({ ...n, position: { x: i * 120 % 1200, y: (i * 220) % 800 } })));
-        }
+    async function layout(_algo: 'horizontal') {
+        lastAlgo.current = 'horizontal';
+        const currentNodes = nodesRef.current as any as Node[];
+        let currentX = 40;
+        const y = 60;
+        const spacing = 20;
+        const laidOut = currentNodes.map(n => {
+            const measured = measuredSizeRef.current[n.id];
+            const width = (n?.style?.width ?? measured?.width ?? 480);
+            const pos = { x: currentX, y };
+            currentX += width + spacing;
+            return { ...n, position: pos } as any;
+        });
+        setNodes(laidOut as any);
         // fit viewport after layout so nodes remain visible
         setTimeout(() => { try { rfInstanceRef.current?.fitView?.({ padding: 0.2 }); } catch { } }, 0);
     }
@@ -366,10 +370,7 @@ export default function App() {
     return (
         <div className="root">
             <div className="toolbar">
-                <button onClick={() => layout('custom')}>Custom (⇧1)</button>
-                <button onClick={() => layout('dagre')}>Dagre (⇧2)</button>
-                <button onClick={() => layout('elk')}>ELK (⇧3)</button>
-                <button onClick={() => layout('force')}>Force (⇧4)</button>
+                <button onClick={() => layout('horizontal')}>Relayout</button>
                 <button onClick={() => vscode?.postMessage({ type: 'loadMore' })}>Load 25 more</button>
                 <button onClick={() => vscode?.postMessage({ type: 'requestChanged' })}>Open Changed (⇧O)</button>
                 <button onClick={() => vscode?.postMessage({ type: 'requestGraph' })}>Reload</button>
