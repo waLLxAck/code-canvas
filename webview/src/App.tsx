@@ -510,6 +510,7 @@ export default function App() {
                 nodes={nodes as any}
                 edges={showEdges ? (focusIds ? (edges as any[]).filter(e => focusIds.has(e.source) && focusIds.has(e.target)) : edges) : []}
                 nodeTypes={nodeTypesLocal as any}
+                onlyRenderVisibleElements
                 onInit={(inst) => {
                     rfInstanceRef.current = inst;
                     try {
