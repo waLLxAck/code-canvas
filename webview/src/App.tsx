@@ -266,6 +266,7 @@ export default function App() {
                 <div className="file-node" style={{ opacity: n.dim ? 0.25 : 1 }}>
                     <div className="file-node-header" onDoubleClick={() => onOpenFile(p)}>{n.label}</div>
                     <CodeCard
+                        key={n.path}
                         file={n.path}
                         lang={n.lang}
                         content={content}
