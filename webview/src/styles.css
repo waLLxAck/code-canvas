@@ -151,3 +151,11 @@ pre.hljs.wrap {
     font-size: 12px;
     opacity: 0.9;
 }
+
+/* Defer offscreen work for heavy node content */
+.file-node,
+.code-card {
+    content-visibility: auto;
+    contain-intrinsic-size: 480px 280px;
+    contain: layout paint size;
+}
