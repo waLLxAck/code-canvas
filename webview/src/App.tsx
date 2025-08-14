@@ -197,6 +197,8 @@ export default function App() {
     // Track pending code loads and run one layout after all code in a batch has loaded
     const pendingCodePathsRef = useRef<Set<string>>(new Set());
     const afterFullLoadLayoutTimer = useRef<number | null>(null);
+    const moveFrameRef = useRef<number | null>(null);
+    const pendingVpRef = useRef<any | null>(null);
 
     function maybeRunLayoutAfterFullLoad() {
         if (pendingCodePathsRef.current.size !== 0) return;
@@ -540,11 +542,24 @@ export default function App() {
                 }}
                 onMove={(_evt, vp) => {
                     try {
-                        if (vp && typeof vp.zoom === 'number') setZoomLevel(vp.zoom);
-                        const el = document.querySelector('.react-flow') as HTMLElement | null;
-                        const rect = el?.getBoundingClientRect();
-                        if (rect && vp) setViewportBox({ x: -vp.x / vp.zoom, y: -vp.y / vp.zoom, width: rect.width / vp.zoom, height: rect.height / vp.zoom });
-                        if (vp) viewportRef.current = { x: vp.x, y: vp.y, zoom: vp.zoom };
+                        if (!vp) return;
+                        pendingVpRef.current = vp;
+                        if (moveFrameRef.current != null) return;
+                        moveFrameRef.current = window.requestAnimationFrame(() => {
+                            moveFrameRef.current = null;
+                            const latest = pendingVpRef.current; pendingVpRef.current = null;
+                            if (!latest) return;
+                            const el = document.querySelector('.react-flow') as HTMLElement | null;
+                            const rect = el?.getBoundingClientRect();
+                            if (!rect) return;
+                            const newZoom = latest.zoom;
+                            const newBox = { x: -latest.x / newZoom, y: -latest.y / newZoom, width: rect.width / newZoom, height: rect.height / newZoom };
+                            const sameZoom = Math.abs(newZoom - zoomLevel) < 1e-3;
+                            const sameBox = Math.abs(newBox.x - viewportBox.x) < 0.1 && Math.abs(newBox.y - viewportBox.y) < 0.1 && Math.abs(newBox.width - viewportBox.width) < 0.1 && Math.abs(newBox.height - viewportBox.height) < 0.1;
+                            if (!sameZoom) setZoomLevel(newZoom);
+                            if (!sameBox) setViewportBox(newBox);
+                            viewportRef.current = { x: latest.x, y: latest.y, zoom: latest.zoom };
+                        });
                     } catch { }
                 }}
                 onEdgeClick={(_e, edge: any) => {
