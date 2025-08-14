@@ -299,6 +299,31 @@ export default function App() {
         setNodes(prev => prev.map(n => ({ ...n, data: { ...n.data, dim: false } } as any)));
     }
 
+    function placeEdgePairAbove(sourceId: string, targetId: string) {
+        setFocusIds(null);
+        setNodes(prev => {
+            const src = prev.find(n => n.id === sourceId);
+            const tgt = prev.find(n => n.id === targetId);
+            if (!src || !tgt) return prev;
+            const spacing = 20;
+            const xStart = 40;
+            const srcMeasured = measuredSizeRef.current[sourceId];
+            const tgtMeasured = measuredSizeRef.current[targetId];
+            const srcWidth = (src.style?.width ?? srcMeasured?.width ?? 480);
+            const srcHeight = (src.style?.height ?? srcMeasured?.height ?? 280);
+            const tgtHeight = (tgt.style?.height ?? tgtMeasured?.height ?? 280);
+            const srcY = 60 - srcHeight - spacing;
+            const tgtY = 60 - tgtHeight - spacing;
+            const srcX = xStart;
+            const tgtX = xStart + srcWidth + spacing;
+            return prev.map(n => {
+                if (n.id === sourceId) return { ...n, position: { x: srcX, y: srcY } } as any;
+                if (n.id === targetId) return { ...n, position: { x: tgtX, y: tgtY } } as any;
+                return n;
+            });
+        });
+    }
+
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => { if ((e.key === 'e' || e.key === 'E')) expandSelection(); };
         window.addEventListener('keydown', onKey);
@@ -388,7 +413,7 @@ export default function App() {
                 nodeTypes={nodeTypesLocal as any}
                 fitView
                 onInit={(inst) => { rfInstanceRef.current = inst; }}
-                onNodeClick={(_e, node: any) => focusNodesForId(node.id)}
+                onNodeClick={(_e, node: any) => { setFocusIds(null); }}
                 onEdgeClick={(_e, edge: any) => {
                     const sl = (edge?.data?.sourceLine ?? 0);
                     const tl = (edge?.data?.targetLine ?? 0);
@@ -400,10 +425,7 @@ export default function App() {
                         highlightRef.current[edge.target] = tl;
                         scrollRef.current[edge.target] = tl;
                     }
-                    // Force a refresh to pass updated props
-                    setNodes(n => [...n]);
-                    // Also focus on the edge's source node to reorganize
-                    if (edge?.source) focusNodesForId(edge.source);
+                    placeEdgePairAbove(edge?.source, edge?.target);
                 }}
                 onSelectionChange={(p: any) => setSelectedIds((p?.nodes || []).map((n: any) => n.id))}
                 onNodesChange={(changes) => setNodes((nds: any) => applyNodeChanges(changes as any, nds as any) as any)}
