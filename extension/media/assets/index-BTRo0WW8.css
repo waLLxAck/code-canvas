@@ -406,6 +406,7 @@
 }
 :root {
     color-scheme: dark;
+    --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 body,
@@ -546,6 +547,16 @@ pre.hljs.wrap {
     .react-flow__node {
         transition: none !important;
     }
+}
+
+/* Smooth transform transitions for the React Flow viewport (zoom smoothing) */
+.react-flow__viewport {
+    transition: transform 240ms var(--ease-smooth);
+}
+
+/* Disable smoothing during pans/drags for snappy feel */
+.react-flow__viewport.no-animate {
+    transition: none !important;
 }
 
 /* Placeholder body shown when code is hidden for performance */

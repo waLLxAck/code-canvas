@@ -39,6 +39,7 @@ export default function App() {
     const linePosRef = useRef<Record<string, { line: number; top: number }[]>>({});
     const highlightRef = useRef<Record<string, number | undefined>>({});
     const scrollRef = useRef<Record<string, number | undefined>>({});
+    const zoomSmoothTimerRef = useRef<number | null>(null);
 
     function enqueueSizeUpdate(nodeId: string, size: { width: number; height: number }) {
         pendingMeasureRef.current[nodeId] = size;
@@ -198,6 +199,7 @@ export default function App() {
     const afterFullLoadLayoutTimer = useRef<number | null>(null);
     const moveFrameRef = useRef<number | null>(null);
     const pendingVpRef = useRef<any | null>(null);
+    const isDraggingViewRef = useRef<boolean>(false);
 
     function maybeRunLayoutAfterFullLoad() {
         if (pendingCodePathsRef.current.size !== 0) return;
@@ -504,6 +506,22 @@ export default function App() {
                             setZoomOk(vp.zoom >= VISIBLE_ZOOM_THRESHOLD);
                             viewportRef.current = { x: vp.x, y: vp.y, zoom: vp.zoom };
                         }
+                        // Smooth wheel-zoom: toggle viewport transition class during zoom bursts
+                        const container = document.querySelector('.react-flow') as HTMLElement | null;
+                        const onWheel = (e: WheelEvent) => {
+                            try {
+                                const vpEl = document.querySelector('.react-flow__viewport');
+                                if (!vpEl) return;
+                                vpEl.classList.remove('no-animate');
+                                if (zoomSmoothTimerRef.current) window.clearTimeout(zoomSmoothTimerRef.current);
+                                zoomSmoothTimerRef.current = window.setTimeout(() => {
+                                    // end of zoom gesture; keep class present for future zooms
+                                }, 120);
+                            } catch { }
+                        };
+                        container?.addEventListener('wheel', onWheel, { passive: true } as any);
+                        // cleanup on unmount
+                        (window as any).__rf_wheel_cleanup = () => container?.removeEventListener('wheel', onWheel as any);
                     } catch { }
                 }}
                 onNodeClick={(_e, node: any) => { setFocusIds(null); }}
@@ -511,12 +529,18 @@ export default function App() {
                     try {
                         const el = document.querySelector(`.react-flow__node[data-id="${node.id}"]`);
                         el?.classList.add('no-animate');
+                        const vpEl = document.querySelector('.react-flow__viewport');
+                        vpEl?.classList.add('no-animate');
+                        isDraggingViewRef.current = true;
                     } catch { }
                 }}
                 onNodeDragStop={(_evt, node) => {
                     try {
                         const el = document.querySelector(`.react-flow__node[data-id="${node.id}"]`);
                         el?.classList.remove('no-animate');
+                        const vpEl = document.querySelector('.react-flow__viewport');
+                        vpEl?.classList.remove('no-animate');
+                        isDraggingViewRef.current = false;
                     } catch { }
                 }}
                 onMove={(_evt, vp) => {
