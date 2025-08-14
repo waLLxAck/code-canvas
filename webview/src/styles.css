@@ -51,7 +51,7 @@ html,
     font-size: 12px;
     letter-spacing: .3px;
     border-bottom: 1px solid #1f2937;
-    cursor: default;
+    cursor: grab;
 }
 
 .code-card {

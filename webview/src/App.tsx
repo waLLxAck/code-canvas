@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
-import ReactFlow, { Background, Controls, MiniMap, Handle, Position } from 'reactflow';
+import ReactFlow, { Background, Controls, MiniMap, Handle, Position, applyNodeChanges } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { nodeTypes } from './reactflow-node-types';
 import CodeCard from './code/CodeCard';
@@ -9,7 +9,7 @@ import { dagreLayout, elkLayout } from './layout';
 declare global { interface Window { acquireVsCodeApi: any; __CODE_CACHE?: Record<string, string> } }
 const vscode = window.acquireVsCodeApi?.();
 
-type Node = { id: string; type: 'file'; position: { x: number; y: number }; data: any; style?: any };
+type Node = { id: string; type: 'file'; position: { x: number; y: number }; data: any; style?: any; dragHandle?: string };
 
 export default function App() {
     const [graph, setGraph] = useState<{ nodes: any[]; edges: any[] }>({ nodes: [], edges: [] });
@@ -101,7 +101,7 @@ export default function App() {
                 const selected = (graph.nodes || []).filter((n: any) => (n.path || '').startsWith(folder));
                 setNodes(prev => selected.map((n: any, i: number) => ({
                     id: n.id, type: 'file', position: { x: (i % 3) * 1200, y: Math.floor(i / 3) * 1000 },
-                    style: computeStyleFromContent(codeCacheRef.current[n.path] || ''), data: { label: n.label, preview: (<div className="preview">{n.path}</div>), path: n.path, lang: n.lang }
+                    style: computeStyleFromContent(codeCacheRef.current[n.path] || ''), dragHandle: '.file-node-header', data: { label: n.label, preview: (<div className="preview">{n.path}</div>), path: n.path, lang: n.lang }
                 })));
                 const paths = selected.map((n: any) => n.path);
                 if (paths.length) vscode?.postMessage({ type: 'requestCodeMany', paths });
@@ -117,6 +117,7 @@ export default function App() {
             type: 'file',
             position: { x: (i % 3) * 1200, y: Math.floor(i / 3) * 1000 },
             style: computeStyleFromContent(codeCacheRef.current[n.path] || ''),
+            dragHandle: '.file-node-header',
             data: { label: n.label, preview: (<div className="preview">{n.path}</div>), path: n.path, lang: n.lang }
         }));
         const e = (graph.edges || []).map((e: any) => ({
@@ -140,6 +141,7 @@ export default function App() {
                     id: n.id, type: 'file',
                     position: { x: Math.random() * 800, y: Math.random() * 600 },
                     style: computeStyleFromContent(codeCacheRef.current[n.path] || ''),
+                    dragHandle: '.file-node-header',
                     data: { label: n.label, preview: <div className="preview">{n.path}</div>, path: n.path, lang: n.lang }
                 } as any);
             }
@@ -169,6 +171,7 @@ export default function App() {
             const ids = new Set(prev.map(p => p.id));
             const add: Node[] = graph.nodes.filter((n: any) => paths.includes(n.path) && !ids.has(n.id)).map((n: any, i: number) => ({
                 id: n.id, type: 'file', position: { x: 50 + i * 30, y: 60 + i * 30 }, style: { width: 480, height: 280 },
+                dragHandle: '.file-node-header',
                 data: { label: n.label, preview: <div className="preview">{n.path}</div>, path: n.path, lang: n.lang }
             }));
             return [...prev, ...add];
@@ -336,8 +339,7 @@ export default function App() {
                 onNodeClick={(_e, node: any) => focusNodesForId(node.id)}
                 onEdgeClick={(_e, edge: any) => {
                     const sl = (edge?.data?.sourceLine ?? 0);
-                    const linkT = (edge?.data?.links && edge.data.links.length > 0) ? edge.data.links[0]?.targetLine : undefined;
-                    const tl = linkT != null ? linkT : (edge?.data?.targetLine ?? 0);
+                    const tl = (edge?.data?.targetLine ?? 0);
                     if (edge?.source) {
                         highlightRef.current[edge.source] = sl;
                         scrollRef.current[edge.source] = sl;
@@ -352,6 +354,7 @@ export default function App() {
                     if (edge?.source) focusNodesForId(edge.source);
                 }}
                 onSelectionChange={(p: any) => setSelectedIds((p?.nodes || []).map((n: any) => n.id))}
+                onNodesChange={(changes) => setNodes((nds: any) => applyNodeChanges(changes as any, nds as any) as any)}
                 minZoom={0.02}
                 maxZoom={8}
             >
