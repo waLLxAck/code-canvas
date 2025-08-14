@@ -1,6 +1,0 @@
-import { CustomAuthError } from "./CustomAuthError.js";
-export declare class MsalCustomAuthError extends CustomAuthError {
-    subError: string | undefined;
-    constructor(error: string, errorDescription?: string, subError?: string, correlationId?: string);
-}
-//# sourceMappingURL=MsalCustomAuthError.d.ts.map
