@@ -40,8 +40,62 @@ export default function App() {
     const highlightRef = useRef<Record<string, number | undefined>>({});
     const scrollRef = useRef<Record<string, number | undefined>>({});
     const zoomSmoothTimerRef = useRef<number | null>(null);
+    const moveSamplesRef = useRef<Array<{ t: number; x: number; y: number }>>([]);
+    const isFlingingRef = useRef<boolean>(false);
+    const flingRafRef = useRef<number | null>(null);
+    const velocityRef = useRef<{ vx: number; vy: number }>({ vx: 0, vy: 0 });
+
+    function cancelFling(): void {
+        if (flingRafRef.current != null) {
+            try { cancelAnimationFrame(flingRafRef.current); } catch { }
+            flingRafRef.current = null;
+        }
+        isFlingingRef.current = false;
+        const vpEl = document.querySelector('.react-flow__viewport');
+        if (!isDraggingViewRef.current) vpEl?.classList.remove('no-animate');
+    }
+
+    function startFling(initialVx: number, initialVy: number): void {
+        cancelFling();
+        const vpEl = document.querySelector('.react-flow__viewport');
+        vpEl?.classList.add('no-animate');
+        isFlingingRef.current = true;
+        velocityRef.current = { vx: initialVx, vy: initialVy };
+        let last = performance.now();
+        const damping = 3.0; // s^-1 exponential decay
+        const stopThreshold = 30; // px/s
+        const axisStopMin = 15; // px/s per-axis stop to avoid tiny oscillations
+        const step = () => {
+            if (!isFlingingRef.current) return;
+            const now = performance.now();
+            const dt = Math.max(0, (now - last) / 1000);
+            last = now;
+            const v = velocityRef.current;
+            const decay = Math.exp(-damping * dt);
+            const prevVx = v.vx; const prevVy = v.vy;
+            v.vx *= decay; v.vy *= decay;
+            // Stop an axis if it crosses zero or is very small
+            if (Math.sign(prevVx) !== 0 && Math.sign(prevVx) !== Math.sign(v.vx)) v.vx = 0;
+            if (Math.abs(v.vx) < axisStopMin) v.vx = 0;
+            if (Math.sign(prevVy) !== 0 && Math.sign(prevVy) !== Math.sign(v.vy)) v.vy = 0;
+            if (Math.abs(v.vy) < axisStopMin) v.vy = 0;
+            const speed = Math.hypot(v.vx, v.vy);
+            const vp = viewportRef.current;
+            let nextX = vp.x + v.vx * dt;
+            let nextY = vp.y + v.vy * dt;
+            // Snap to integer pixels near stop to reduce subpixel shimmer
+            if (speed < 80) { nextX = Math.round(nextX); nextY = Math.round(nextY); }
+            try { rfInstanceRef.current?.setViewport?.({ x: nextX, y: nextY, zoom: vp.zoom }); } catch { }
+            viewportRef.current = { x: nextX, y: nextY, zoom: vp.zoom };
+            if (speed < stopThreshold) { cancelFling(); return; }
+            flingRafRef.current = requestAnimationFrame(step);
+        };
+        flingRafRef.current = requestAnimationFrame(step);
+    }
 
     function enqueueSizeUpdate(nodeId: string, size: { width: number; height: number }) {
+        // Avoid style writes while viewport is animated to prevent flicker
+        if (isFlingingRef.current || isDraggingViewRef.current) return;
         pendingMeasureRef.current[nodeId] = size;
         if (rafCommitRef.current == null) {
             rafCommitRef.current = window.requestAnimationFrame(() => {
@@ -441,6 +495,7 @@ export default function App() {
                             wrap={wrap}
                             onLinePositions={(positions) => { linePosRef.current[p.id] = positions; }}
                             onMeasured={({ width, height }) => {
+                                if (isFlingingRef.current || isDraggingViewRef.current) return;
                                 const last = measuredSizeRef.current[p.id];
                                 if (last && last.width === width && last.height === height) return;
                                 measuredSizeRef.current[p.id] = { width, height };
@@ -512,10 +567,10 @@ export default function App() {
                             try {
                                 const vpEl = document.querySelector('.react-flow__viewport');
                                 if (!vpEl) return;
-                                vpEl.classList.remove('no-animate');
+                                vpEl.classList.add('zoom-smooth');
                                 if (zoomSmoothTimerRef.current) window.clearTimeout(zoomSmoothTimerRef.current);
                                 zoomSmoothTimerRef.current = window.setTimeout(() => {
-                                    // end of zoom gesture; keep class present for future zooms
+                                    vpEl.classList.remove('zoom-smooth');
                                 }, 120);
                             } catch { }
                         };
@@ -530,8 +585,11 @@ export default function App() {
                         const el = document.querySelector(`.react-flow__node[data-id="${node.id}"]`);
                         el?.classList.add('no-animate');
                         const vpEl = document.querySelector('.react-flow__viewport');
+                        vpEl?.classList.remove('zoom-smooth');
                         vpEl?.classList.add('no-animate');
                         isDraggingViewRef.current = true;
+                        cancelFling();
+                        moveSamplesRef.current = [];
                     } catch { }
                 }}
                 onNodeDragStop={(_evt, node) => {
@@ -543,9 +601,16 @@ export default function App() {
                         isDraggingViewRef.current = false;
                     } catch { }
                 }}
+                onMoveStart={() => {
+                    // User begins panning
+                    cancelFling();
+                    moveSamplesRef.current = [];
+                    try { const el = document.querySelector('.react-flow__viewport'); el?.classList.remove('zoom-smooth'); el?.classList.add('no-animate'); } catch { }
+                }}
                 onMove={(_evt, vp) => {
                     try {
                         if (!vp) return;
+                        if (isFlingingRef.current) { viewportRef.current = { x: vp.x, y: vp.y, zoom: vp.zoom }; return; }
                         pendingVpRef.current = vp;
                         if (moveFrameRef.current != null) return;
                         moveFrameRef.current = window.requestAnimationFrame(() => {
@@ -556,7 +621,32 @@ export default function App() {
                             const nextZoomOk = newZoom >= VISIBLE_ZOOM_THRESHOLD;
                             if (nextZoomOk !== zoomOk) setZoomOk(nextZoomOk);
                             viewportRef.current = { x: latest.x, y: latest.y, zoom: latest.zoom };
+                            // Record samples for velocity estimation
+                            const now = performance.now();
+                            moveSamplesRef.current.push({ t: now, x: latest.x, y: latest.y });
+                            // Keep only last ~120ms of samples
+                            const cutoff = now - 120;
+                            if (moveSamplesRef.current.length > 1) {
+                                let i = 0; while (i < moveSamplesRef.current.length && moveSamplesRef.current[i].t < cutoff) i++;
+                                if (i > 0) moveSamplesRef.current.splice(0, i);
+                            }
                         });
+                    } catch { }
+                }}
+                onMoveEnd={() => {
+                    try {
+                        // Estimate velocity from last samples
+                        const samples = moveSamplesRef.current;
+                        if (!samples || samples.length < 2) { cancelFling(); const el = document.querySelector('.react-flow__viewport'); el?.classList.remove('no-animate'); return; }
+                        const first = samples[0];
+                        const lastS = samples[samples.length - 1];
+                        const dtMs = Math.max(1, lastS.t - first.t);
+                        const vx = (lastS.x - first.x) / dtMs * 1000; // px/s
+                        const vy = (lastS.y - first.y) / dtMs * 1000; // px/s
+                        const speed = Math.hypot(vx, vy);
+                        const startThreshold = 450; // px/s to start fling
+                        if (speed >= startThreshold) startFling(vx, vy);
+                        else { cancelFling(); const el = document.querySelector('.react-flow__viewport'); el?.classList.remove('no-animate'); }
                     } catch { }
                 }}
                 onEdgeClick={(_e, edge: any) => {

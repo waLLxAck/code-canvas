@@ -146,6 +146,10 @@ pre.hljs.wrap {
 
 /* Smooth transform transitions for the React Flow viewport (zoom smoothing) */
 .react-flow__viewport {
+    transition: none;
+}
+
+.react-flow__viewport.zoom-smooth {
     transition: transform var(--zoom-duration) var(--ease-smooth);
 }
 
@@ -165,9 +169,14 @@ pre.hljs.wrap {
 }
 
 /* Defer offscreen work for heavy node content */
-.file-node,
 .code-card {
     content-visibility: auto;
     contain-intrinsic-size: 480px 280px;
     contain: layout paint size;
+}
+
+/* Promote nodes to their own layer to reduce flicker during viewport moves */
+.file-node {
+    backface-visibility: hidden;
+    transform: translateZ(0);
 }
