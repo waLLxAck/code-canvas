@@ -141,3 +141,13 @@ pre.hljs.wrap {
         transition: none !important;
     }
 }
+
+/* Placeholder body shown when code is hidden for performance */
+.node-placeholder-body {
+    height: calc(100% - 30px);
+    display: grid;
+    place-items: center;
+    color: #94a3b8;
+    font-size: 12px;
+    opacity: 0.9;
+}

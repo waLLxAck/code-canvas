@@ -27,6 +27,9 @@ export default function App() {
     const [focusIds, setFocusIds] = useState<Set<string> | null>(null);
     const rfInstanceRef = useRef<any | null>(null);
     const hasFitOnceRef = useRef<boolean>(false);
+    const viewportRef = useRef<{ x: number; y: number; zoom: number }>({ x: 0, y: 0, zoom: 1 });
+    const [zoomLevel, setZoomLevel] = useState<number>(1);
+    const [viewportBox, setViewportBox] = useState<{ x: number; y: number; width: number; height: number }>({ x: 0, y: 0, width: 0, height: 0 });
     const codeCacheRef = useRef<Record<string, string>>({});
     const measuredSizeRef = useRef<Record<string, { width: number; height: number }>>({});
     const pendingMeasureRef = useRef<Record<string, { width: number; height: number }>>({});
@@ -404,10 +407,30 @@ export default function App() {
 
     // render code previews lazily inside each node
 
+    const VISIBLE_ZOOM_THRESHOLD = 0.65; // below this, render placeholder
+    function isNodeVisible(nodeProps: any): boolean {
+        const box = viewportBox;
+        if (!box || !box.width || !box.height) return true;
+        const nodeId: string = nodeProps?.id;
+        const referenced = nodesRef.current.find(nn => nn.id === nodeId);
+        const width = (referenced?.style?.width ?? measuredSizeRef.current[nodeId]?.width ?? 480);
+        const height = (referenced?.style?.height ?? measuredSizeRef.current[nodeId]?.height ?? 280);
+        const nx1 = (nodeProps?.xPos ?? referenced?.position?.x ?? 0);
+        const ny1 = (nodeProps?.yPos ?? referenced?.position?.y ?? 0);
+        const nx2 = nx1 + width;
+        const ny2 = ny1 + height;
+        const vx1 = box.x;
+        const vy1 = box.y;
+        const vx2 = box.x + box.width;
+        const vy2 = box.y + box.height;
+        return !(nx2 < vx1 || nx1 > vx2 || ny2 < vy1 || ny1 > vy2);
+    }
+
     const nodeTypesLocal = useMemo(() => ({
         file: (p: any) => {
             const n = p.data;
             const content = codeCacheRef.current[n.path] ?? n.path;
+            const shouldShowCode = zoomLevel >= VISIBLE_ZOOM_THRESHOLD && isNodeVisible(p);
             const handleLines: number[] = (() => {
                 const s = new Set<number>();
                 for (const e of edges as any[]) {
@@ -419,23 +442,27 @@ export default function App() {
             return (
                 <div className="file-node" style={{ opacity: n.dim ? 0.25 : 1 }}>
                     <div className="file-node-header" onDoubleClick={() => onOpenFile(p)}>{n.label}</div>
-                    <CodeCard
-                        key={n.path}
-                        file={n.path}
-                        lang={n.lang}
-                        content={content}
-                        onTokenClick={onTokenClick}
-                        wrap={wrap}
-                        highlightLine={highlightRef.current[p.id]}
-                        scrollToLine={scrollRef.current[p.id]}
-                        onLinePositions={(positions) => { linePosRef.current[p.id] = positions; }}
-                        onMeasured={({ width, height }) => {
-                            const last = measuredSizeRef.current[p.id];
-                            if (last && last.width === width && last.height === height) return;
-                            measuredSizeRef.current[p.id] = { width, height };
-                            enqueueSizeUpdate(p.id, { width, height });
-                        }}
-                    />
+                    {shouldShowCode ? (
+                        <CodeCard
+                            key={n.path}
+                            file={n.path}
+                            lang={n.lang}
+                            content={content}
+                            onTokenClick={onTokenClick}
+                            wrap={wrap}
+                            highlightLine={highlightRef.current[p.id]}
+                            scrollToLine={scrollRef.current[p.id]}
+                            onLinePositions={(positions) => { linePosRef.current[p.id] = positions; }}
+                            onMeasured={({ width, height }) => {
+                                const last = measuredSizeRef.current[p.id];
+                                if (last && last.width === width && last.height === height) return;
+                                measuredSizeRef.current[p.id] = { width, height };
+                                enqueueSizeUpdate(p.id, { width, height });
+                            }}
+                        />
+                    ) : (
+                        <div className="node-placeholder-body">Zoom in to view code</div>
+                    )}
                     {/* default center handles */}
                     <Handle type="source" position={Position.Right} id={`line-0`} />
                     <Handle type="target" position={Position.Left} id={`line-0`} />
@@ -462,7 +489,7 @@ export default function App() {
                 </div>
             );
         }
-    }), [edges]);
+    }), [edges, zoomLevel, viewportBox]);
 
     return (
         <div className="root">
@@ -483,7 +510,19 @@ export default function App() {
                 nodes={nodes as any}
                 edges={showEdges ? (focusIds ? (edges as any[]).filter(e => focusIds.has(e.source) && focusIds.has(e.target)) : edges) : []}
                 nodeTypes={nodeTypesLocal as any}
-                onInit={(inst) => { rfInstanceRef.current = inst; }}
+                onInit={(inst) => {
+                    rfInstanceRef.current = inst;
+                    try {
+                        const vp = inst?.getViewport?.();
+                        const el = document.querySelector('.react-flow__viewport') as HTMLElement | null;
+                        const rect = el?.getBoundingClientRect();
+                        if (vp && rect) {
+                            setZoomLevel(vp.zoom);
+                            setViewportBox({ x: -vp.x / vp.zoom, y: -vp.y / vp.zoom, width: rect.width / vp.zoom, height: rect.height / vp.zoom });
+                            viewportRef.current = { x: vp.x, y: vp.y, zoom: vp.zoom };
+                        }
+                    } catch { }
+                }}
                 onNodeClick={(_e, node: any) => { setFocusIds(null); }}
                 onNodeDragStart={(_evt, node) => {
                     try {
@@ -495,6 +534,20 @@ export default function App() {
                     try {
                         const el = document.querySelector(`.react-flow__node[data-id="${node.id}"]`);
                         el?.classList.remove('no-animate');
+                    } catch { }
+                }}
+                onMove={(_evt, vp) => {
+                    try {
+                        const bounds = rfInstanceRef.current?.getViewport?.();
+                        if (vp && typeof vp.zoom === 'number') setZoomLevel(vp.zoom);
+                        const el = document.querySelector('.react-flow__viewport') as HTMLElement | null;
+                        const wrap = el?.getBoundingClientRect();
+                        if (wrap && vp) {
+                            const vw = wrap.width / vp.zoom;
+                            const vh = wrap.height / vp.zoom;
+                            setViewportBox({ x: -vp.x / vp.zoom, y: -vp.y / vp.zoom, width: vw, height: vh });
+                        }
+                        if (vp) viewportRef.current = { x: vp.x, y: vp.y, zoom: vp.zoom };
                     } catch { }
                 }}
                 onEdgeClick={(_e, edge: any) => {
