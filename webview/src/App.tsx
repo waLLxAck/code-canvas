@@ -373,17 +373,16 @@ export default function App() {
                     const aY = sharedY;
                     next = next.map(n => (n.id === aId ? ({ ...n, position: { x: aX, y: aY } } as any) : n));
                 } else {
-                    // No shared node: elevate both newly
+                    // No shared node: elevate both newly, top-aligned
                     const aWidth = getNodeWidth(aId);
                     const aHeight = getNodeHeight(aId);
                     const bHeight = getNodeHeight(bId);
                     const aX = 40;
-                    const aY = yRow - aHeight - spacing;
+                    const topY = yRow - Math.max(aHeight, bHeight) - spacing;
                     const bX = aX + aWidth + spacing;
-                    const bY = yRow - bHeight - spacing;
                     next = next.map(n => {
-                        if (n.id === aId) return { ...n, position: { x: aX, y: aY } } as any;
-                        if (n.id === bId) return { ...n, position: { x: bX, y: bY } } as any;
+                        if (n.id === aId) return { ...n, position: { x: aX, y: topY } } as any;
+                        if (n.id === bId) return { ...n, position: { x: bX, y: topY } } as any;
                         return n;
                     });
                 }
