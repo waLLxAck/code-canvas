@@ -54,7 +54,47 @@ function htmlForWebview(panel2, context) {
 var import_fast_glob = __toESM(require("fast-glob"));
 var path = __toESM(require("path"));
 var fs2 = __toESM(require("fs"));
+var vscode3 = __toESM(require("vscode"));
+
+// src/lsp.ts
 var vscode2 = __toESM(require("vscode"));
+async function getReferences(uri, position) {
+  const locs = await vscode2.commands.executeCommand(
+    "vscode.executeReferenceProvider",
+    uri,
+    position
+  );
+  return (locs || []).map((l) => ({
+    uri: l.uri.toString(),
+    range: { start: l.range.start, end: l.range.end }
+  }));
+}
+async function getDefinition(uri, position) {
+  const defs = await vscode2.commands.executeCommand("vscode.executeDefinitionProvider", uri, position);
+  return defs;
+}
+async function getDocumentSymbols(uri) {
+  try {
+    const symbols = await vscode2.commands.executeCommand(
+      "vscode.executeDocumentSymbolProvider",
+      uri
+    );
+    if (!symbols || !Array.isArray(symbols)) return [];
+    const out = [];
+    const visit = (items) => {
+      for (const s of items) {
+        out.push({ name: s.name, kind: s.kind, range: s.selectionRange || s.range });
+        if (s.children && s.children.length) visit(s.children);
+      }
+    };
+    visit(symbols);
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+// src/graph.ts
 var JS_GLOB = ["**/*.{js,jsx,ts,tsx}"];
 var PY_GLOB = ["**/*.py"];
 function normalizePath(p) {
@@ -70,7 +110,7 @@ function normalizePath(p) {
   }
 }
 async function buildIndex(root) {
-  const excludes = vscode2.workspace.getConfiguration("codeCanvas").get("excludeGlobs") || [];
+  const excludes = vscode3.workspace.getConfiguration("codeCanvas").get("excludeGlobs") || [];
   const rawFiles = Array.from(/* @__PURE__ */ new Set([
     ...await (0, import_fast_glob.default)(JS_GLOB, { cwd: root, absolute: true, ignore: excludes }),
     ...await (0, import_fast_glob.default)(PY_GLOB, { cwd: root, absolute: true, ignore: excludes })
@@ -86,11 +126,13 @@ async function buildIndex(root) {
   }
   const imports = /* @__PURE__ */ new Map();
   const importLines = /* @__PURE__ */ new Map();
+  const importEntries = /* @__PURE__ */ new Map();
   for (const f of files) {
     const src = safeRead(f);
     const specs = lang.get(f) === "py" ? parsePyImportsWithLines(src) : parseJsTsImportsWithLines(src);
     const targets = /* @__PURE__ */ new Set();
     const lineMap = /* @__PURE__ */ new Map();
+    importEntries.set(f, specs);
     for (const { spec, line } of specs) {
       const r = lang.get(f) === "py" ? resolvePy(root, f, spec) : resolveJsTs(root, f, spec);
       if (!r) continue;
@@ -103,9 +145,9 @@ async function buildIndex(root) {
     imports.set(f, targets);
     importLines.set(f, lineMap);
   }
-  return { nodes: new Set(files), imports, importLines, lang };
+  return { nodes: new Set(files), imports, importLines, lang, importEntries };
 }
-function subgraph(index, seeds, maxNodes) {
+async function subgraph(index, seeds, maxNodes) {
   const seen = /* @__PURE__ */ new Set();
   const q = [];
   for (const s of seeds) {
@@ -150,16 +192,42 @@ function subgraph(index, seeds, maxNodes) {
   const nodeIdByPath = /* @__PURE__ */ new Map();
   for (const n of nodes) nodeIdByPath.set(n.path, n.id);
   const edges = [];
+  const symbolCache = /* @__PURE__ */ new Map();
+  const getSymbols = async (file) => {
+    if (!symbolCache.has(file)) {
+      const uri = vscode3.Uri.file(file);
+      symbolCache.set(file, await getDocumentSymbols(uri));
+    }
+    return symbolCache.get(file);
+  };
   for (const s of seen) {
     const lineMap = index.importLines.get(s) || /* @__PURE__ */ new Map();
+    const entries = index.importEntries.get(s) || [];
     for (const t of index.imports.get(s) || /* @__PURE__ */ new Set()) {
       if (seen.has(t)) {
         const sid = nodeIdByPath.get(s);
         const tid = nodeIdByPath.get(t);
         const lines = lineMap.get(t) || [];
         const sourceLine = lines.length ? lines[0] : void 0;
-        const targetLine = 0;
-        edges.push({ id: `e_${hashString(s + "->" + t + "#" + (sourceLine ?? -1))}`, source: sid, target: tid, kind: "import", sourceLine, targetLine });
+        const links = [];
+        try {
+          const syms = await getSymbols(t);
+          for (const { spec, line } of entries) {
+            const resolved = index.lang.get(s) === "py" ? resolvePy(path.dirname(s), s, spec) : resolveJsTs(path.dirname(s), s, spec);
+            const resolvedNorm = resolved ? normalizePath(resolved) : void 0;
+            if (resolvedNorm !== t) continue;
+            let targetLine = 0;
+            const topLevel = syms.filter((sy) => sy.range?.start?.line != null);
+            if (topLevel.length === 1) targetLine = topLevel[0].range.start.line;
+            else if (topLevel.length > 1) {
+              const preferred = topLevel.find((sy) => sy.kind === vscode3.SymbolKind.Class || sy.kind === vscode3.SymbolKind.Function || sy.kind === vscode3.SymbolKind.Method) || topLevel[0];
+              targetLine = preferred.range.start.line;
+            }
+            links.push({ symbolName: void 0, targetLine });
+          }
+        } catch {
+        }
+        edges.push({ id: `e_${hashString(s + "->" + t + "#" + (sourceLine ?? -1))}`, source: sid, target: tid, kind: "import", sourceLine, targetLine: links[0]?.targetLine ?? 0, links });
       }
     }
   }
@@ -236,9 +304,9 @@ function makeSafeId(raw) {
 }
 
 // src/git.ts
-var vscode3 = __toESM(require("vscode"));
+var vscode4 = __toESM(require("vscode"));
 async function getChangedFiles() {
-  const gitExt = vscode3.extensions.getExtension("vscode.git");
+  const gitExt = vscode4.extensions.getExtension("vscode.git");
   if (gitExt) {
     const api = (gitExt.isActive ? gitExt.exports : await gitExt.activate()).getAPI(1);
     const repo = api.repositories[0];
@@ -260,7 +328,7 @@ async function getChangedFiles() {
   }
 }
 function watchGitState(onChange) {
-  const gitExt = vscode3.extensions.getExtension("vscode.git");
+  const gitExt = vscode4.extensions.getExtension("vscode.git");
   if (!gitExt) return () => {
   };
   const add = async () => {
@@ -280,24 +348,6 @@ function watchGitState(onChange) {
   add();
   return () => {
   };
-}
-
-// src/lsp.ts
-var vscode4 = __toESM(require("vscode"));
-async function getReferences(uri, position) {
-  const locs = await vscode4.commands.executeCommand(
-    "vscode.executeReferenceProvider",
-    uri,
-    position
-  );
-  return (locs || []).map((l) => ({
-    uri: l.uri.toString(),
-    range: { start: l.range.start, end: l.range.end }
-  }));
-}
-async function getDefinition(uri, position) {
-  const defs = await vscode4.commands.executeCommand("vscode.executeDefinitionProvider", uri, position);
-  return defs;
 }
 
 // src/extension.ts
@@ -338,7 +388,7 @@ function activate(context) {
       const cap = Math.min(maxNodes, initialCapCfg);
       lastSeeds = seeds;
       lastCap = cap;
-      const g = subgraph(index, seeds, cap);
+      const g = await subgraph(index, seeds, cap);
       panel?.webview.postMessage({ type: "graph", graph: g });
     }),
     vscode5.commands.registerCommand("codeCanvas.loadMore", async () => {
@@ -351,7 +401,7 @@ function activate(context) {
       const maxNodes = vscode5.workspace.getConfiguration("codeCanvas").get("maxNodes") ?? 300;
       const nextCap = Math.min(maxNodes, lastCap + 25);
       lastCap = nextCap;
-      const g = subgraph(index, lastSeeds, nextCap);
+      const g = await subgraph(index, lastSeeds, nextCap);
       panel?.webview.postMessage({ type: "graph", graph: g });
     })
   );
@@ -396,7 +446,7 @@ function openPanel(context) {
         const maxNodes = vscode5.workspace.getConfiguration("codeCanvas").get("maxNodes") ?? 300;
         const nextCap = Math.min(maxNodes, lastCap + 25);
         lastCap = nextCap;
-        const g = subgraph(index, lastSeeds, nextCap);
+        const g = await subgraph(index, lastSeeds, nextCap);
         panel?.webview.postMessage({ type: "graph", graph: g });
         break;
       }
@@ -475,7 +525,7 @@ async function sendInitial(ws) {
   const initialCap = Math.min(maxNodes, initialCapCfg);
   lastSeeds = seeds;
   lastCap = initialCap;
-  const g = subgraph(index, seeds, initialCap);
+  const g = await subgraph(index, seeds, initialCap);
   if (!g.nodes.length) panel.webview.postMessage({ type: "empty", reason: "no-matched-files" });
   else panel.webview.postMessage({ type: "graph", graph: g });
 }
@@ -484,8 +534,8 @@ async function sendExpansion(ids) {
   const maxNodes = vscode5.workspace.getConfiguration("codeCanvas").get("maxNodes") ?? 300;
   const index = await idxPromise;
   if (!index) return;
-  const g = subgraph(index, ids, maxNodes);
-  panel.webview.postMessage({ type: "expandResult", graph: g });
+  const g = await subgraph(index, ids, maxNodes);
+  panel?.webview.postMessage({ type: "expandResult", graph: g });
 }
 function deactivate() {
 }

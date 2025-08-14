@@ -8,6 +8,8 @@ export type GraphNode = {
     lang: 'ts' | 'js' | 'tsx' | 'jsx' | 'py' | 'other';
 };
 
+export type EdgeLink = { symbolName?: string; targetLine: number };
+
 export type GraphEdge = {
     id: string;
     source: string;
@@ -15,6 +17,7 @@ export type GraphEdge = {
     kind: 'import' | 'call' | 'ref';
     sourceLine?: number;
     targetLine?: number;
+    links?: EdgeLink[];
 };
 
 export type Graph = { nodes: GraphNode[]; edges: GraphEdge[] };

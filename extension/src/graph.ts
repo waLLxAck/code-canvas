@@ -2,7 +2,8 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as vscode from 'vscode';
-import type { Graph } from './util';
+import type { Graph, EdgeLink } from './util';
+import { getDocumentSymbols } from './lsp';
 
 const JS_GLOB = ['**/*.{js,jsx,ts,tsx}'];
 const PY_GLOB = ['**/*.py'];
@@ -27,6 +28,8 @@ type Index = {
     imports: Map<string, Set<string>>; // file -> imported file paths (resolved)
     importLines: Map<string, Map<string, number[]>>; // file -> (resolved -> lines)
     lang: Map<string, 'js' | 'ts' | 'py' | 'other'>;
+    // Detailed import entries to enable symbol-level mapping
+    importEntries: Map<string, { spec: string; line: number }[]>; // per source file
 };
 
 export async function buildIndex(root: string): Promise<Index> {
@@ -51,11 +54,13 @@ export async function buildIndex(root: string): Promise<Index> {
 
     const imports = new Map<string, Set<string>>();
     const importLines = new Map<string, Map<string, number[]>>();
+    const importEntries = new Map<string, { spec: string; line: number }[]>();
     for (const f of files) {
         const src = safeRead(f);
         const specs = lang.get(f) === 'py' ? parsePyImportsWithLines(src) : parseJsTsImportsWithLines(src);
         const targets = new Set<string>();
         const lineMap = new Map<string, number[]>();
+        importEntries.set(f, specs);
         for (const { spec, line } of specs) {
             const r = lang.get(f) === 'py' ? resolvePy(root, f, spec) : resolveJsTs(root, f, spec);
             if (!r) continue;
@@ -69,11 +74,11 @@ export async function buildIndex(root: string): Promise<Index> {
         importLines.set(f, lineMap);
     }
 
-    return { nodes: new Set(files), imports, importLines, lang };
+    return { nodes: new Set(files), imports, importLines, lang, importEntries };
 }
 
 // Build a subgraph with BFS from seeds up to max nodes/edges.
-export function subgraph(index: Index, seeds: string[], maxNodes: number): Graph {
+export async function subgraph(index: Index, seeds: string[], maxNodes: number): Promise<Graph> {
     const seen = new Set<string>();
     const q: string[] = [];
     for (const s of seeds) {
@@ -117,16 +122,51 @@ export function subgraph(index: Index, seeds: string[], maxNodes: number): Graph
     for (const n of nodes) nodeIdByPath.set(n.path, n.id);
 
     const edges: Graph['edges'] = [];
+    const symbolCache = new Map<string, Awaited<ReturnType<typeof getDocumentSymbols>>>();
+    const getSymbols = async (file: string) => {
+        if (!symbolCache.has(file)) {
+            const uri = vscode.Uri.file(file);
+            symbolCache.set(file, await getDocumentSymbols(uri));
+        }
+        return symbolCache.get(file)!;
+    };
+
     for (const s of seen) {
         const lineMap = index.importLines.get(s) || new Map();
+        const entries = index.importEntries.get(s) || [];
         for (const t of (index.imports.get(s) || new Set())) {
             if (seen.has(t)) {
                 const sid = nodeIdByPath.get(s)!;
                 const tid = nodeIdByPath.get(t)!;
                 const lines = lineMap.get(t) || [];
                 const sourceLine = lines.length ? lines[0] : undefined;
-                const targetLine = 0; // fallback: start of file
-                edges.push({ id: `e_${hashString(s + '->' + t + '#' + (sourceLine ?? -1))}`, source: sid, target: tid, kind: 'import', sourceLine, targetLine });
+
+                // Compute per-symbol target lines for this src->t relationship
+                const links: EdgeLink[] = [];
+                try {
+                    const syms = await getSymbols(t);
+                    // Find all import statements for this target file and map names heuristically
+                    for (const { spec, line } of entries) {
+                        const resolved = (index.lang.get(s) === 'py') ? resolvePy(path.dirname(s), s, spec) : resolveJsTs(path.dirname(s), s, spec);
+                        const resolvedNorm = resolved ? normalizePath(resolved) : undefined;
+                        if (resolvedNorm !== t) continue;
+                        // Heuristic: try to split last path part as module name, but prefer matching symbols by name presence in the source file near import
+                        // For Phase 2 scope, we will not fully parse named specifiers; instead, map to best top-level symbol (class/func/var) if unique, else fallback 0
+                        let targetLine = 0;
+                        const topLevel = syms.filter(sy => sy.range?.start?.line != null);
+                        if (topLevel.length === 1) targetLine = topLevel[0].range.start.line;
+                        else if (topLevel.length > 1) {
+                            // pick first non-trivial symbol (Class, Function) if present
+                            const preferred = topLevel.find(sy => sy.kind === vscode.SymbolKind.Class || sy.kind === vscode.SymbolKind.Function || sy.kind === vscode.SymbolKind.Method) || topLevel[0];
+                            targetLine = preferred.range.start.line;
+                        }
+                        links.push({ symbolName: undefined, targetLine });
+                    }
+                } catch {
+                    // Fallback: keep empty links
+                }
+
+                edges.push({ id: `e_${hashString(s + '->' + t + '#' + (sourceLine ?? -1))}`, source: sid, target: tid, kind: 'import', sourceLine, targetLine: links[0]?.targetLine ?? 0, links });
             }
         }
     }

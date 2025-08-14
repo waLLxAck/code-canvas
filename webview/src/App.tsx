@@ -336,7 +336,8 @@ export default function App() {
                 onNodeClick={(_e, node: any) => focusNodesForId(node.id)}
                 onEdgeClick={(_e, edge: any) => {
                     const sl = (edge?.data?.sourceLine ?? 0);
-                    const tl = (edge?.data?.targetLine ?? 0);
+                    const linkT = (edge?.data?.links && edge.data.links.length > 0) ? edge.data.links[0]?.targetLine : undefined;
+                    const tl = linkT != null ? linkT : (edge?.data?.targetLine ?? 0);
                     if (edge?.source) {
                         highlightRef.current[edge.source] = sl;
                         scrollRef.current[edge.source] = sl;

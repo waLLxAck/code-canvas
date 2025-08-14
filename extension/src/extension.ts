@@ -44,7 +44,7 @@ export function activate(context: vscode.ExtensionContext) {
             const cap = Math.min(maxNodes, initialCapCfg);
             lastSeeds = seeds;
             lastCap = cap;
-            const g: Graph = subgraph(index, seeds, cap);
+            const g: Graph = await subgraph(index, seeds, cap);
             panel?.webview.postMessage({ type: 'graph', graph: g });
         }),
         vscode.commands.registerCommand('codeCanvas.loadMore', async () => {
@@ -57,7 +57,7 @@ export function activate(context: vscode.ExtensionContext) {
             const maxNodes: number = vscode.workspace.getConfiguration('codeCanvas').get('maxNodes') ?? 300;
             const nextCap = Math.min(maxNodes, lastCap + 25);
             lastCap = nextCap;
-            const g: Graph = subgraph(index, lastSeeds, nextCap);
+            const g: Graph = await subgraph(index, lastSeeds, nextCap);
             panel?.webview.postMessage({ type: 'graph', graph: g });
         })
     );
@@ -104,7 +104,7 @@ function openPanel(context: vscode.ExtensionContext) {
                 const maxNodes: number = vscode.workspace.getConfiguration('codeCanvas').get('maxNodes') ?? 300;
                 const nextCap = Math.min(maxNodes, lastCap + 25);
                 lastCap = nextCap;
-                const g: Graph = subgraph(index, lastSeeds, nextCap);
+                const g: Graph = await subgraph(index, lastSeeds, nextCap);
                 panel?.webview.postMessage({ type: 'graph', graph: g });
                 break;
             }
@@ -186,7 +186,7 @@ async function sendInitial(ws?: string) {
     const initialCap = Math.min(maxNodes, initialCapCfg);
     lastSeeds = seeds;
     lastCap = initialCap;
-    const g: Graph = subgraph(index, seeds, initialCap);
+    const g: Graph = await subgraph(index, seeds, initialCap);
     if (!g.nodes.length) panel.webview.postMessage({ type: 'empty', reason: 'no-matched-files' });
     else panel.webview.postMessage({ type: 'graph', graph: g });
 }
@@ -196,8 +196,8 @@ async function sendExpansion(ids: string[]) {
     const maxNodes: number = vscode.workspace.getConfiguration('codeCanvas').get('maxNodes') ?? 300;
     const index = await idxPromise;
     if (!index) return;
-    const g: Graph = subgraph(index, ids, maxNodes);
-    panel.webview.postMessage({ type: 'expandResult', graph: g });
+    const g: Graph = await subgraph(index, ids, maxNodes);
+    panel?.webview.postMessage({ type: 'expandResult', graph: g });
 }
 
 export function deactivate() { }
