@@ -74,7 +74,16 @@ export default function CodeCard({ file, lang, content, onTokenClick, onMeasured
     file: string; lang: 'ts' | 'js' | 'py' | 'other'; content: string; onTokenClick: (payload: { path: string; line: number; character: number; token: string }) => void; onMeasured?: (size: { width: number; height: number }) => void; wrap?: boolean;
     onLinePositions?: (positions: { line: number; top: number }[]) => void; highlightLine?: number; scrollToLine?: number;
 }) {
-    const rawHtml = useMemo(() => highlight(content, lang), [content, lang]);
+    const effectiveLang = useMemo<'ts' | 'js' | 'py' | 'other'>(() => {
+        if (lang && lang !== 'other') return lang;
+        const lower = (file || '').toLowerCase();
+        if (lower.endsWith('.py')) return 'py';
+        if (lower.endsWith('.ts') || lower.endsWith('.tsx')) return 'ts';
+        if (lower.endsWith('.js') || lower.endsWith('.jsx') || lower.endsWith('.mjs') || lower.endsWith('.cjs')) return 'js';
+        return 'other';
+    }, [file, lang]);
+
+    const rawHtml = useMemo(() => highlight(content, effectiveLang), [content, effectiveLang]);
     const html = useMemo(() => wrapHighlightedHtmlPreserveLines(rawHtml), [rawHtml]);
     const preRef = useRef<HTMLPreElement | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);

@@ -7,6 +7,21 @@ import type { Graph } from './util';
 const JS_GLOB = ['**/*.{js,jsx,ts,tsx}'];
 const PY_GLOB = ['**/*.py'];
 
+// Normalize paths to a canonical absolute form used for all map/set keys
+function normalizePath(p: string): string {
+    try {
+        let out = path.resolve(p);
+        if (process.platform === 'win32') {
+            out = path.normalize(out);
+            // Lowercase drive letter for consistency
+            out = out.replace(/^([A-Z]):\\/, (m, d) => `${d.toLowerCase()}:\\`);
+        }
+        return out;
+    } catch {
+        return p;
+    }
+}
+
 type Index = {
     nodes: Set<string>;
     imports: Map<string, Set<string>>; // file -> imported file paths (resolved)
@@ -16,18 +31,21 @@ type Index = {
 
 export async function buildIndex(root: string): Promise<Index> {
     const excludes: string[] = vscode.workspace.getConfiguration('codeCanvas').get('excludeGlobs') || [];
-    const files = Array.from(new Set([
+    const rawFiles = Array.from(new Set([
         ...await fg(JS_GLOB, { cwd: root, absolute: true, ignore: excludes }),
         ...await fg(PY_GLOB, { cwd: root, absolute: true, ignore: excludes }),
     ]));
+    const files = rawFiles.map(f => normalizePath(f));
 
     const lang = new Map<string, 'js' | 'ts' | 'py' | 'other'>();
     for (const f of files) {
+        const ext = path.extname(f).toLowerCase();
         lang.set(
             f,
-            f.endsWith('.py') ? 'py'
-                : (f.endsWith('.ts') || f.endsWith('.tsx')) ? 'ts'
-                    : 'js'
+            ext === '.py' ? 'py'
+                : (ext === '.ts' || ext === '.tsx') ? 'ts'
+                    : (ext === '.js' || ext === '.jsx') ? 'js'
+                        : 'other'
         );
     }
 
@@ -41,10 +59,11 @@ export async function buildIndex(root: string): Promise<Index> {
         for (const { spec, line } of specs) {
             const r = lang.get(f) === 'py' ? resolvePy(root, f, spec) : resolveJsTs(root, f, spec);
             if (!r) continue;
-            targets.add(r);
-            const arr = lineMap.get(r) || [];
+            const rNorm = normalizePath(r);
+            targets.add(rNorm);
+            const arr = lineMap.get(rNorm) || [];
             arr.push(line);
-            lineMap.set(r, arr);
+            lineMap.set(rNorm, arr);
         }
         imports.set(f, targets);
         importLines.set(f, lineMap);
@@ -57,7 +76,10 @@ export async function buildIndex(root: string): Promise<Index> {
 export function subgraph(index: Index, seeds: string[], maxNodes: number): Graph {
     const seen = new Set<string>();
     const q: string[] = [];
-    for (const s of seeds) if (index.nodes.has(s)) { seen.add(s); q.push(s); }
+    for (const s of seeds) {
+        const sNorm = normalizePath(s);
+        if (index.nodes.has(sNorm)) { seen.add(sNorm); q.push(sNorm); }
+    }
 
     // If no valid seeds, pick up to 10 random-ish files to start
     if (q.length === 0) {
@@ -71,7 +93,9 @@ export function subgraph(index: Index, seeds: string[], maxNodes: number): Graph
         const out = index.imports.get(cur) || new Set();
         for (const t of out) {
             if (seen.size >= maxNodes) break;
-            if (!seen.has(t)) { seen.add(t); q.push(t); }
+            const tNorm = normalizePath(t);
+            if (!index.nodes.has(tNorm)) continue;
+            if (!seen.has(tNorm)) { seen.add(tNorm); q.push(tNorm); }
         }
         // add a bit of reverse reachability (files importing cur)
         for (const [f, outs] of index.imports) {
@@ -151,7 +175,7 @@ function resolveJsTs(root: string, fromFile: string, spec: string): string | und
     if (!spec.startsWith('.') && !spec.startsWith('/')) return; // skip packages
     const base = path.resolve(path.dirname(fromFile), spec);
     const tries = ['', '.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx', '/index.js', '/index.jsx'];
-    for (const t of tries) { const p = base + t; if (fs.existsSync(p)) return p; }
+    for (const t of tries) { const p = base + t; if (fs.existsSync(p)) return normalizePath(p); }
 }
 function resolvePy(root: string, _from: string, mod: string): string | undefined {
     const parts = mod.split('.');
@@ -159,7 +183,7 @@ function resolvePy(root: string, _from: string, mod: string): string | undefined
         path.resolve(root, ...parts) + '.py',
         path.resolve(root, ...parts, '__init__.py')
     ];
-    for (const p of candidates) if (fs.existsSync(p)) return p;
+    for (const p of candidates) if (fs.existsSync(p)) return normalizePath(p);
 }
 
 function hashString(input: string): string {

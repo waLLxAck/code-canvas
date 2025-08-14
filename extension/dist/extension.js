@@ -57,17 +57,31 @@ var fs2 = __toESM(require("fs"));
 var vscode2 = __toESM(require("vscode"));
 var JS_GLOB = ["**/*.{js,jsx,ts,tsx}"];
 var PY_GLOB = ["**/*.py"];
+function normalizePath(p) {
+  try {
+    let out = path.resolve(p);
+    if (process.platform === "win32") {
+      out = path.normalize(out);
+      out = out.replace(/^([A-Z]):\\/, (m, d) => `${d.toLowerCase()}:\\`);
+    }
+    return out;
+  } catch {
+    return p;
+  }
+}
 async function buildIndex(root) {
   const excludes = vscode2.workspace.getConfiguration("codeCanvas").get("excludeGlobs") || [];
-  const files = Array.from(/* @__PURE__ */ new Set([
+  const rawFiles = Array.from(/* @__PURE__ */ new Set([
     ...await (0, import_fast_glob.default)(JS_GLOB, { cwd: root, absolute: true, ignore: excludes }),
     ...await (0, import_fast_glob.default)(PY_GLOB, { cwd: root, absolute: true, ignore: excludes })
   ]));
+  const files = rawFiles.map((f) => normalizePath(f));
   const lang = /* @__PURE__ */ new Map();
   for (const f of files) {
+    const ext = path.extname(f).toLowerCase();
     lang.set(
       f,
-      f.endsWith(".py") ? "py" : f.endsWith(".ts") || f.endsWith(".tsx") ? "ts" : "js"
+      ext === ".py" ? "py" : ext === ".ts" || ext === ".tsx" ? "ts" : ext === ".js" || ext === ".jsx" ? "js" : "other"
     );
   }
   const imports = /* @__PURE__ */ new Map();
@@ -80,10 +94,11 @@ async function buildIndex(root) {
     for (const { spec, line } of specs) {
       const r = lang.get(f) === "py" ? resolvePy(root, f, spec) : resolveJsTs(root, f, spec);
       if (!r) continue;
-      targets.add(r);
-      const arr = lineMap.get(r) || [];
+      const rNorm = normalizePath(r);
+      targets.add(rNorm);
+      const arr = lineMap.get(rNorm) || [];
       arr.push(line);
-      lineMap.set(r, arr);
+      lineMap.set(rNorm, arr);
     }
     imports.set(f, targets);
     importLines.set(f, lineMap);
@@ -93,9 +108,12 @@ async function buildIndex(root) {
 function subgraph(index, seeds, maxNodes) {
   const seen = /* @__PURE__ */ new Set();
   const q = [];
-  for (const s of seeds) if (index.nodes.has(s)) {
-    seen.add(s);
-    q.push(s);
+  for (const s of seeds) {
+    const sNorm = normalizePath(s);
+    if (index.nodes.has(sNorm)) {
+      seen.add(sNorm);
+      q.push(sNorm);
+    }
   }
   if (q.length === 0) {
     for (const f of Array.from(index.nodes).slice(0, Math.min(10, index.nodes.size))) {
@@ -108,9 +126,11 @@ function subgraph(index, seeds, maxNodes) {
     const out = index.imports.get(cur) || /* @__PURE__ */ new Set();
     for (const t of out) {
       if (seen.size >= maxNodes) break;
-      if (!seen.has(t)) {
-        seen.add(t);
-        q.push(t);
+      const tNorm = normalizePath(t);
+      if (!index.nodes.has(tNorm)) continue;
+      if (!seen.has(tNorm)) {
+        seen.add(tNorm);
+        q.push(tNorm);
       }
     }
     for (const [f, outs] of index.imports) {
@@ -192,7 +212,7 @@ function resolveJsTs(root, fromFile, spec) {
   const tries = ["", ".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.tsx", "/index.js", "/index.jsx"];
   for (const t of tries) {
     const p = base + t;
-    if (fs2.existsSync(p)) return p;
+    if (fs2.existsSync(p)) return normalizePath(p);
   }
 }
 function resolvePy(root, _from, mod) {
@@ -201,7 +221,7 @@ function resolvePy(root, _from, mod) {
     path.resolve(root, ...parts) + ".py",
     path.resolve(root, ...parts, "__init__.py")
   ];
-  for (const p of candidates) if (fs2.existsSync(p)) return p;
+  for (const p of candidates) if (fs2.existsSync(p)) return normalizePath(p);
 }
 function hashString(input) {
   let hash = 0 >>> 0;
