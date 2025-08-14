@@ -15,6 +15,8 @@ export default function App() {
     const [graph, setGraph] = useState<{ nodes: any[]; edges: any[] }>({ nodes: [], edges: [] });
     const [nodes, setNodes] = useState<Node[]>([]);
     const [edges, setEdges] = useState<any[]>([]);
+    const nodesRef = useRef<Node[]>([]);
+    const edgesRef = useRef<any[]>([]);
     const [rawEdges, setRawEdges] = useState<any[]>([]);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [emptyMsg, setEmptyMsg] = useState<string | undefined>(undefined);
@@ -24,6 +26,7 @@ export default function App() {
     const [wrap, setWrap] = useState(false);
     const [showEdges, setShowEdges] = useState(true);
     const [focusIds, setFocusIds] = useState<Set<string> | null>(null);
+    const rfInstanceRef = useRef<any | null>(null);
     const codeCacheRef = useRef<Record<string, string>>({});
     const measuredSizeRef = useRef<Record<string, { width: number; height: number }>>({});
     const pendingMeasureRef = useRef<Record<string, { width: number; height: number }>>({});
@@ -71,7 +74,7 @@ export default function App() {
             else if (msg.type === 'graph') {
                 setEmptyMsg(undefined); setProgress(undefined); setGraph(msg.graph);
                 const paths = (msg.graph?.nodes || []).map((n: any) => n.path);
-                if (paths.length) vscode?.postMessage({ type: 'requestCodeMany', paths });
+                if (paths.length) startCodeLoadBatch(paths);
                 setRawEdges(msg.graph?.edges || []);
             }
             else if (msg.type === 'expandResult') mergeGraph(msg.graph);
@@ -88,6 +91,7 @@ export default function App() {
             } else if (msg.type === 'code') {
                 codeCacheRef.current[msg.path] = msg.content || '';
                 setNodes(prev => prev.map(n => n.data.path === msg.path ? { ...n, style: computeStyleFromContent(codeCacheRef.current[msg.path]) } : n));
+                onCodeArrived([msg.path]);
             } else if (msg.type === 'codeMany') {
                 const updated = new Set<string>();
                 for (const { path, content } of (msg.entries || [])) {
@@ -95,6 +99,7 @@ export default function App() {
                     updated.add(path);
                 }
                 if (updated.size) setNodes(prev => prev.map(n => updated.has(n.data.path) ? { ...n, style: computeStyleFromContent(codeCacheRef.current[n.data.path]) } : n));
+                onCodeArrived(Array.from(updated));
             } else if (msg.type === 'seedFolder') {
                 // The extension relays the path; filter current index graph by prefix and request code for those
                 const folder: string = msg.folder;
@@ -104,7 +109,7 @@ export default function App() {
                     style: computeStyleFromContent(codeCacheRef.current[n.path] || ''), dragHandle: '.file-node-header', data: { label: n.label, preview: (<div className="preview">{n.path}</div>), path: n.path, lang: n.lang }
                 })));
                 const paths = selected.map((n: any) => n.path);
-                if (paths.length) vscode?.postMessage({ type: 'requestCodeMany', paths });
+                if (paths.length) startCodeLoadBatch(paths);
             }
         };
         window.addEventListener('message', listener);
@@ -131,6 +136,9 @@ export default function App() {
         setNodes(initial); setEdges(e);
     }, [graph]);
 
+    useEffect(() => { nodesRef.current = nodes; }, [nodes]);
+    useEffect(() => { edgesRef.current = edges; }, [edges]);
+
     function mergeGraph(g: any) {
         const newPaths: string[] = [];
         setNodes(prev => {
@@ -152,9 +160,25 @@ export default function App() {
             const add = g.edges.filter((e: any) => !ids.has(e.id));
             return [...prev, ...add];
         });
-        if (newPaths.length) vscode?.postMessage({ type: 'requestCodeMany', paths: newPaths });
-        // optional: auto-layout after expand with debounce
-        scheduleAutoLayout();
+        if (newPaths.length) requestMoreCode(newPaths);
+    }
+
+    function openFiles(paths: string[]) {
+        setNodes(prev => {
+            const ids = new Set(prev.map(p => p.id));
+            const add: Node[] = graph.nodes
+                .filter((n: any) => paths.includes(n.path) && !ids.has(n.id))
+                .map((n: any, i: number) => ({
+                    id: n.id,
+                    type: 'file',
+                    position: { x: 50 + i * 30, y: 60 + i * 30 },
+                    style: { width: 480, height: 280 },
+                    dragHandle: '.file-node-header',
+                    data: { label: n.label, preview: <div className="preview">{n.path}</div>, path: n.path, lang: n.lang }
+                }));
+            return [...prev, ...add];
+        });
+        if (paths && paths.length) requestMoreCode(paths);
     }
 
     // Debounced auto-layout to avoid thrashing
@@ -166,33 +190,59 @@ export default function App() {
         autoLayoutTimer.current = window.setTimeout(() => { layout('elk'); }, 250);
     }
 
-    function openFiles(paths: string[]) {
-        setNodes(prev => {
-            const ids = new Set(prev.map(p => p.id));
-            const add: Node[] = graph.nodes.filter((n: any) => paths.includes(n.path) && !ids.has(n.id)).map((n: any, i: number) => ({
-                id: n.id, type: 'file', position: { x: 50 + i * 30, y: 60 + i * 30 }, style: { width: 480, height: 280 },
-                dragHandle: '.file-node-header',
-                data: { label: n.label, preview: <div className="preview">{n.path}</div>, path: n.path, lang: n.lang }
-            }));
-            return [...prev, ...add];
-        });
-        if (paths && paths.length) {
-            vscode?.postMessage({ type: 'requestCodeMany', paths });
+    // Track pending code loads and run one layout after all code in a batch has loaded
+    const pendingCodePathsRef = useRef<Set<string>>(new Set());
+    const afterFullLoadLayoutTimer = useRef<number | null>(null);
+
+    function maybeRunLayoutAfterFullLoad() {
+        if (pendingCodePathsRef.current.size !== 0) return;
+        if (afterFullLoadLayoutTimer.current != null) {
+            window.clearTimeout(afterFullLoadLayoutTimer.current);
         }
+        // Give the DOM a moment so CodeCard measurements propagate before layout
+        afterFullLoadLayoutTimer.current = window.setTimeout(() => {
+            layout('elk');
+            afterFullLoadLayoutTimer.current = null;
+        }, 120);
+    }
+
+    function startCodeLoadBatch(paths: string[]) {
+        const toRequest = (paths || []).filter(p => !codeCacheRef.current[p]);
+        pendingCodePathsRef.current = new Set(toRequest);
+        if (toRequest.length) {
+            vscode?.postMessage({ type: 'requestCodeMany', paths: toRequest });
+        } else {
+            maybeRunLayoutAfterFullLoad();
+        }
+    }
+
+    function requestMoreCode(paths: string[]) {
+        const toRequest = (paths || []).filter(p => !codeCacheRef.current[p]);
+        if (toRequest.length) {
+            toRequest.forEach(p => pendingCodePathsRef.current.add(p));
+            vscode?.postMessage({ type: 'requestCodeMany', paths: toRequest });
+        }
+    }
+
+    function onCodeArrived(paths: string[]) {
+        let any = false;
+        for (const p of paths) {
+            if (pendingCodePathsRef.current.delete(p)) any = true;
+        }
+        if (any) maybeRunLayoutAfterFullLoad();
     }
 
     async function layout(algo: 'custom' | 'dagre' | 'elk' | 'force') {
         lastAlgo.current = algo;
-        if (algo === 'dagre') setNodes(await dagreLayout(nodes as any, edges as any) as any);
-        else if (algo === 'elk') setNodes(await elkLayout(nodes as any, edges as any) as any);
+        const currentNodes = nodesRef.current as any;
+        const currentEdges = edgesRef.current as any;
+        if (algo === 'dagre') setNodes(await dagreLayout(currentNodes, currentEdges) as any);
+        else if (algo === 'elk') setNodes(await elkLayout(currentNodes, currentEdges) as any);
         else if (algo === 'force') {
-            // Simple force: jitter spread
-            setNodes(nodes.map((n, i) => ({ ...n, position: { x: i * 120 % 1200, y: (i * 220) % 800 } })));
+            setNodes((currentNodes as any).map((n: any, i: number) => ({ ...n, position: { x: i * 120 % 1200, y: (i * 220) % 800 } })));
         }
-        // fit after layout to avoid overlaps staying in view
-        setTimeout(() => {
-            try { (document.querySelector('.react-flow__controls-zoomout') as HTMLButtonElement)?.click(); } catch { }
-        }, 0);
+        // fit viewport after layout so nodes remain visible
+        setTimeout(() => { try { rfInstanceRef.current?.fitView?.({ padding: 0.2 }); } catch { } }, 0);
     }
 
     function onOpenFile(n: Node) { vscode?.postMessage({ type: 'openFile', path: n.data.path }); }
@@ -336,6 +386,7 @@ export default function App() {
                 edges={showEdges ? (focusIds ? (edges as any[]).filter(e => focusIds.has(e.source) && focusIds.has(e.target)) : edges) : []}
                 nodeTypes={nodeTypesLocal as any}
                 fitView
+                onInit={(inst) => { rfInstanceRef.current = inst; }}
                 onNodeClick={(_e, node: any) => focusNodesForId(node.id)}
                 onEdgeClick={(_e, edge: any) => {
                     const sl = (edge?.data?.sourceLine ?? 0);
