@@ -144,7 +144,10 @@ export default function CodeCard({ file, lang, content, onTokenClick, onMeasured
         if (!pre || !container) return;
         const target = pre.querySelector(`.code-line[data-line="${scrollToLine}"]`) as HTMLElement | null;
         if (target) {
-            target.scrollIntoView({ block: 'center' });
+            const preTop = (pre as HTMLElement).offsetTop;
+            const targetTop = target.offsetTop;
+            const desired = preTop + targetTop - (container.clientHeight / 2) + (target.offsetHeight / 2);
+            container.scrollTo({ top: Math.max(0, desired), behavior: 'auto' });
         }
     }, [scrollToLine]);
 

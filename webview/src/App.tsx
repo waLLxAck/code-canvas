@@ -26,6 +26,7 @@ export default function App() {
     const [showEdges, setShowEdges] = useState(true);
     const [focusIds, setFocusIds] = useState<Set<string> | null>(null);
     const rfInstanceRef = useRef<any | null>(null);
+    const hasFitOnceRef = useRef<boolean>(false);
     const codeCacheRef = useRef<Record<string, string>>({});
     const measuredSizeRef = useRef<Record<string, { width: number; height: number }>>({});
     const pendingMeasureRef = useRef<Record<string, { width: number; height: number }>>({});
@@ -133,6 +134,7 @@ export default function App() {
             targetHandle: (e.targetLine ?? null) !== null && (e.targetLine ?? undefined) !== undefined ? `line-${e.targetLine}` : undefined
         }));
         setNodes(initial); setEdges(e);
+        hasFitOnceRef.current = false;
     }, [graph]);
 
     useEffect(() => { nodesRef.current = nodes; }, [nodes]);
@@ -231,7 +233,7 @@ export default function App() {
         if (any) maybeRunLayoutAfterFullLoad();
     }
 
-    async function layout(_algo: 'horizontal') {
+    async function layout(_algo: 'horizontal', forceFit: boolean = false) {
         lastAlgo.current = 'horizontal';
         const currentNodes = nodesRef.current as any as Node[];
         let currentX = 40;
@@ -245,8 +247,6 @@ export default function App() {
             return { ...n, position: pos } as any;
         });
         setNodes(laidOut as any);
-        // fit viewport after layout so nodes remain visible
-        setTimeout(() => { try { rfInstanceRef.current?.fitView?.({ padding: 0.2 }); } catch { } }, 0);
     }
 
     function onOpenFile(n: Node) { vscode?.postMessage({ type: 'openFile', path: n.data.path }); }
@@ -299,29 +299,102 @@ export default function App() {
         setNodes(prev => prev.map(n => ({ ...n, data: { ...n.data, dim: false } } as any)));
     }
 
-    function placeEdgePairAbove(sourceId: string, targetId: string) {
-        setFocusIds(null);
-        setNodes(prev => {
-            const src = prev.find(n => n.id === sourceId);
-            const tgt = prev.find(n => n.id === targetId);
-            if (!src || !tgt) return prev;
+    const elevatedPairRef = useRef<{ edgeId: string | null; aId: string | null; bId: string | null }>({ edgeId: null, aId: null, bId: null });
+
+    function getNodeWidth(id: string): number {
+        const n = nodesRef.current.find(nn => nn.id === id);
+        const measured = measuredSizeRef.current[id];
+        return (n?.style?.width ?? measured?.width ?? 480);
+    }
+
+    function getNodeHeight(id: string): number {
+        const n = nodesRef.current.find(nn => nn.id === id);
+        const measured = measuredSizeRef.current[id];
+        return (n?.style?.height ?? measured?.height ?? 280);
+    }
+
+    function computeRowPositions(list: Node[]): Map<string, { x: number; y: number }> {
+        const pos = new Map<string, { x: number; y: number }>();
+        const spacing = 20;
+        let currentX = 40;
+        const y = 60;
+        for (const n of list) {
+            pos.set(n.id, { x: currentX, y });
+            const width = getNodeWidth(n.id);
+            currentX += width + spacing;
+        }
+        return pos;
+    }
+
+    function elevateEdgePair(edge: any) {
+        try {
+            const aId: string | undefined = edge?.source;
+            const bId: string | undefined = edge?.target;
+            if (!aId || !bId) return;
+            const prevPair = elevatedPairRef.current;
+            const samePair = (prevPair.aId && prevPair.bId) && ((prevPair.aId === aId && prevPair.bId === bId) || (prevPair.aId === bId && prevPair.bId === aId));
+            if (edge?.id && prevPair.edgeId === edge.id) return; // exact same link
+            if (!edge?.id && samePair) return; // same endpoints
+
+            const sharedIds = new Set<string>();
+            if (prevPair.aId && (prevPair.aId === aId || prevPair.aId === bId)) sharedIds.add(prevPair.aId);
+            if (prevPair.bId && (prevPair.bId === aId || prevPair.bId === bId)) sharedIds.add(prevPair.bId);
+
             const spacing = 20;
-            const xStart = 40;
-            const srcMeasured = measuredSizeRef.current[sourceId];
-            const tgtMeasured = measuredSizeRef.current[targetId];
-            const srcWidth = (src.style?.width ?? srcMeasured?.width ?? 480);
-            const srcHeight = (src.style?.height ?? srcMeasured?.height ?? 280);
-            const tgtHeight = (tgt.style?.height ?? tgtMeasured?.height ?? 280);
-            const srcY = 60 - srcHeight - spacing;
-            const tgtY = 60 - tgtHeight - spacing;
-            const srcX = xStart;
-            const tgtX = xStart + srcWidth + spacing;
-            return prev.map(n => {
-                if (n.id === sourceId) return { ...n, position: { x: srcX, y: srcY } } as any;
-                if (n.id === targetId) return { ...n, position: { x: tgtX, y: tgtY } } as any;
-                return n;
+            const yRow = 60;
+
+            // Temporarily freeze interactions; prevents internal auto panning/viewport changes during updates
+            try { rfInstanceRef.current?.setInteractive?.(false); } catch { }
+
+            setFocusIds(null);
+            setNodes(prev => {
+                // First: restore everyone to row positions except shared elevated node (if any)
+                const posMap = computeRowPositions(prev as any);
+                let next = prev.map(n => (sharedIds.has(n.id) ? n : ({ ...n, position: posMap.get(n.id)! } as any)));
+
+                // Then: elevate the new pair
+                if (sharedIds.has(aId)) {
+                    const shared = next.find(n => n.id === aId)!;
+                    const sharedX = (shared as any).position.x;
+                    const sharedY = (shared as any).position.y;
+                    const aWidth = getNodeWidth(aId);
+                    const bWidth = getNodeWidth(bId);
+                    const bHeight = getNodeHeight(bId);
+                    const bX = sharedX + aWidth + spacing;
+                    const bY = sharedY; // keep same vertical as shared for minimal movement
+                    next = next.map(n => (n.id === bId ? ({ ...n, position: { x: bX, y: bY } } as any) : n));
+                } else if (sharedIds.has(bId)) {
+                    const shared = next.find(n => n.id === bId)!;
+                    const sharedX = (shared as any).position.x;
+                    const sharedY = (shared as any).position.y;
+                    const aWidth = getNodeWidth(aId);
+                    const aHeight = getNodeHeight(aId);
+                    const aX = sharedX - aWidth - spacing;
+                    const aY = sharedY;
+                    next = next.map(n => (n.id === aId ? ({ ...n, position: { x: aX, y: aY } } as any) : n));
+                } else {
+                    // No shared node: elevate both newly
+                    const aWidth = getNodeWidth(aId);
+                    const aHeight = getNodeHeight(aId);
+                    const bHeight = getNodeHeight(bId);
+                    const aX = 40;
+                    const aY = yRow - aHeight - spacing;
+                    const bX = aX + aWidth + spacing;
+                    const bY = yRow - bHeight - spacing;
+                    next = next.map(n => {
+                        if (n.id === aId) return { ...n, position: { x: aX, y: aY } } as any;
+                        if (n.id === bId) return { ...n, position: { x: bX, y: bY } } as any;
+                        return n;
+                    });
+                }
+
+                elevatedPairRef.current = { edgeId: edge?.id ?? `${aId}->${bId}`, aId, bId };
+                return next;
             });
-        });
+
+            // Re-enable interactions right after updates
+            setTimeout(() => { try { rfInstanceRef.current?.setInteractive?.(true); } catch { } }, 0);
+        } catch { }
     }
 
     useEffect(() => {
@@ -395,7 +468,7 @@ export default function App() {
     return (
         <div className="root">
             <div className="toolbar">
-                <button onClick={() => layout('horizontal')}>Relayout</button>
+                <button onClick={() => layout('horizontal', true)}>Relayout</button>
                 <button onClick={() => vscode?.postMessage({ type: 'loadMore' })}>Load 25 more</button>
                 <button onClick={() => vscode?.postMessage({ type: 'requestChanged' })}>Open Changed (⇧O)</button>
                 <button onClick={() => vscode?.postMessage({ type: 'requestGraph' })}>Reload</button>
@@ -411,7 +484,6 @@ export default function App() {
                 nodes={nodes as any}
                 edges={showEdges ? (focusIds ? (edges as any[]).filter(e => focusIds.has(e.source) && focusIds.has(e.target)) : edges) : []}
                 nodeTypes={nodeTypesLocal as any}
-                fitView
                 onInit={(inst) => { rfInstanceRef.current = inst; }}
                 onNodeClick={(_e, node: any) => { setFocusIds(null); }}
                 onEdgeClick={(_e, edge: any) => {
@@ -425,7 +497,7 @@ export default function App() {
                         highlightRef.current[edge.target] = tl;
                         scrollRef.current[edge.target] = tl;
                     }
-                    placeEdgePairAbove(edge?.source, edge?.target);
+                    elevateEdgePair(edge);
                 }}
                 onSelectionChange={(p: any) => setSelectedIds((p?.nodes || []).map((n: any) => n.id))}
                 onNodesChange={(changes) => setNodes((nds: any) => applyNodeChanges(changes as any, nds as any) as any)}
