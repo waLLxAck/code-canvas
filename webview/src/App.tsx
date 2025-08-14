@@ -28,8 +28,7 @@ export default function App() {
     const rfInstanceRef = useRef<any | null>(null);
     const hasFitOnceRef = useRef<boolean>(false);
     const viewportRef = useRef<{ x: number; y: number; zoom: number }>({ x: 0, y: 0, zoom: 1 });
-    const [zoomLevel, setZoomLevel] = useState<number>(1);
-    const [viewportBox, setViewportBox] = useState<{ x: number; y: number; width: number; height: number }>({ x: 0, y: 0, width: 0, height: 0 });
+    const [zoomOk, setZoomOk] = useState<boolean>(true);
     const codeCacheRef = useRef<Record<string, string>>({});
     const measuredSizeRef = useRef<Record<string, { width: number; height: number }>>({});
     const pendingMeasureRef = useRef<Record<string, { width: number; height: number }>>({});
@@ -410,30 +409,13 @@ export default function App() {
     // render code previews lazily inside each node
 
     const VISIBLE_ZOOM_THRESHOLD = 0.65; // below this, render placeholder
-    function isNodeVisible(nodeProps: any): boolean {
-        const box = viewportBox;
-        if (!box || !box.width || !box.height) return true;
-        const nodeId: string = nodeProps?.id;
-        const referenced = nodesRef.current.find(nn => nn.id === nodeId);
-        const width = (referenced?.style?.width ?? measuredSizeRef.current[nodeId]?.width ?? 480);
-        const height = (referenced?.style?.height ?? measuredSizeRef.current[nodeId]?.height ?? 280);
-        const nx1 = (nodeProps?.xPos ?? referenced?.position?.x ?? 0);
-        const ny1 = (nodeProps?.yPos ?? referenced?.position?.y ?? 0);
-        const nx2 = nx1 + width;
-        const ny2 = ny1 + height;
-        const vx1 = box.x;
-        const vy1 = box.y;
-        const vx2 = box.x + box.width;
-        const vy2 = box.y + box.height;
-        return !(nx2 < vx1 || nx1 > vx2 || ny2 < vy1 || ny1 > vy2);
-    }
 
     const codeRefs = useRef<Record<string, React.RefObject<import('./code/CodeCard').CodeCardHandle>>>({});
     const nodeTypesLocal = useMemo(() => ({
         file: (p: any) => {
             const n = p.data;
             const content = codeCacheRef.current[n.path] ?? n.path;
-            const shouldShowCode = zoomLevel >= VISIBLE_ZOOM_THRESHOLD && isNodeVisible(p);
+            const shouldShowCode = zoomOk;
             if (!codeRefs.current[p.id]) codeRefs.current[p.id] = React.createRef();
             const handleLines: number[] = (() => {
                 const s = new Set<number>();
@@ -492,7 +474,7 @@ export default function App() {
                 </div>
             );
         }
-    }), [edges, zoomLevel, viewportBox, wrap]);
+    }), [edges, zoomOk, wrap]);
 
     return (
         <div className="root">
@@ -518,11 +500,8 @@ export default function App() {
                     rfInstanceRef.current = inst;
                     try {
                         const vp = inst?.getViewport?.();
-                        const el = document.querySelector('.react-flow') as HTMLElement | null;
-                        const rect = el?.getBoundingClientRect();
-                        if (vp && rect) {
-                            setZoomLevel(vp.zoom);
-                            setViewportBox({ x: -vp.x / vp.zoom, y: -vp.y / vp.zoom, width: rect.width / vp.zoom, height: rect.height / vp.zoom });
+                        if (vp) {
+                            setZoomOk(vp.zoom >= VISIBLE_ZOOM_THRESHOLD);
                             viewportRef.current = { x: vp.x, y: vp.y, zoom: vp.zoom };
                         }
                     } catch { }
@@ -549,15 +528,9 @@ export default function App() {
                             moveFrameRef.current = null;
                             const latest = pendingVpRef.current; pendingVpRef.current = null;
                             if (!latest) return;
-                            const el = document.querySelector('.react-flow') as HTMLElement | null;
-                            const rect = el?.getBoundingClientRect();
-                            if (!rect) return;
                             const newZoom = latest.zoom;
-                            const newBox = { x: -latest.x / newZoom, y: -latest.y / newZoom, width: rect.width / newZoom, height: rect.height / newZoom };
-                            const sameZoom = Math.abs(newZoom - zoomLevel) < 1e-3;
-                            const sameBox = Math.abs(newBox.x - viewportBox.x) < 0.1 && Math.abs(newBox.y - viewportBox.y) < 0.1 && Math.abs(newBox.width - viewportBox.width) < 0.1 && Math.abs(newBox.height - viewportBox.height) < 0.1;
-                            if (!sameZoom) setZoomLevel(newZoom);
-                            if (!sameBox) setViewportBox(newBox);
+                            const nextZoomOk = newZoom >= VISIBLE_ZOOM_THRESHOLD;
+                            if (nextZoomOk !== zoomOk) setZoomOk(nextZoomOk);
                             viewportRef.current = { x: latest.x, y: latest.y, zoom: latest.zoom };
                         });
                     } catch { }
