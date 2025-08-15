@@ -455,8 +455,8 @@ pre.hljs.wrap {
 }
 
 /* Improve visibility when a connected node is hovered/selected (ReactFlow applies .selected on nodes) */
-.react-flow__node:hover ~ .react-flow__edges path,
-.react-flow__node.selected ~ .react-flow__edges path {
+.react-flow__node:hover~.react-flow__edges path,
+.react-flow__node.selected~.react-flow__edges path {
     stroke-linecap: round;
 }
 
@@ -465,6 +465,7 @@ pre.hljs.wrap {
     .react-flow__edge.selected .react-flow__edge-path {
         stroke-width: 7 !important;
     }
+
     .react-flow__node.selected .file-node {
         box-shadow: 0 0 0 4px rgba(167, 139, 250, 0.95) inset, 0 0 28px rgba(167, 139, 250, 0.55);
     }
@@ -476,6 +477,7 @@ pre.hljs.wrap {
         forced-color-adjust: none;
         stroke: Highlight !important;
     }
+
     .react-flow__node.selected .file-node {
         forced-color-adjust: none;
         outline: 3px solid Highlight;
