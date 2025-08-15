@@ -527,6 +527,7 @@ export default function App() {
     const codeRefs = useRef<Record<string, React.RefObject<import('./code/CodeCard').CodeCardHandle>>>({});
     const hoveredIdsRef = useRef<Set<string>>(new Set());
     const [hoveredIds, setHoveredIds] = useState<Set<string>>(new Set());
+    const [hoverOverlay, setHoverOverlay] = useState<{ id: string; label: string; x: number; y: number } | null>(null);
 
     function setHovered(id: string | null, on: boolean) {
         const next = new Set(hoveredIdsRef.current);
@@ -536,11 +537,24 @@ export default function App() {
         hoveredIdsRef.current = next; setHoveredIds(next);
     }
 
-    function computePlaceholderFontPx(nodeId: string, label: string): number {
-        const width = (measuredSizeRef.current[nodeId]?.width ?? 480) * 0.9;
+    function updateHoverOverlay(nd: any | null) {
+        if (!nd) { setHoverOverlay(null); return; }
+        try {
+            const el = document.querySelector(`.react-flow__node[data-id="${nd.id}"]`) as HTMLElement | null;
+            if (!el) { setHoverOverlay(null); return; }
+            const r = el.getBoundingClientRect();
+            const hx = Math.round(r.left + 8);
+            const hy = Math.round(r.top + 8);
+            const label = (nd?.data as any)?.label ?? nd?.id;
+            setHoverOverlay({ id: nd.id, label, x: hx, y: hy });
+        } catch { setHoverOverlay(null); }
+    }
+
+    function computePlaceholderFontPx(label: string, widthPx: number | undefined): number {
+        const width = Math.max(120, (widthPx ?? 480) * 0.9);
         const chars = Math.max(1, (label || '').length);
         const px = Math.min(96, Math.max(18, Math.floor(width / (chars * 0.55))));
-        return Math.max(18, px);
+        return px;
     }
 
     const nodeTypesLocal = useMemo(() => ({
@@ -558,6 +572,7 @@ export default function App() {
                 return Array.from(s).sort((a, b) => a - b).slice(0, 200);
             })();
             const isHover = hoveredIds.has(p.id) || !!p.selected;
+            const placeholderSize = computePlaceholderFontPx(n.label, p.width ?? (measuredSizeRef.current[p.id]?.width ?? (p?.style?.width ?? 480)));
             return (
                 <div className="file-node" style={{ opacity: n.dim ? 0.25 : 1 }}>
                     <div className="file-node-header label-fixed" onDoubleClick={() => onOpenFile(p)}>{n.label}</div>
@@ -582,7 +597,7 @@ export default function App() {
                         />
                     ) : (
                         <div className="node-placeholder-body">
-                            <div className="node-placeholder-title" style={{ fontSize: computePlaceholderFontPx(p.id, n.label) }}>{n.label}</div>
+                            <div className="node-placeholder-title" style={{ fontSize: placeholderSize }}>{n.label}</div>
                             <div style={{ opacity: 0.75 }}>Zoom in to view code</div>
                         </div>
                     )}
@@ -612,7 +627,10 @@ export default function App() {
                 </div>
             );
         },
-        group: GroupNode,
+        group: (p: any) => {
+            // Reuse default GroupNode visual but rely on global overlay for z-top label
+            return GroupNode(p);
+        },
     }), [edges, zoomOk, wrap, hoveredIds]);
 
     return (
@@ -637,8 +655,9 @@ export default function App() {
                 panOnDrag={[1, 2]} /* left or middle mouse */
                 panOnScroll={true}
                 selectionOnDrag
-                onNodeMouseEnter={(_e, nd) => setHovered(nd.id, true)}
-                onNodeMouseLeave={(_e, nd) => setHovered(nd.id, false)}
+                onNodeMouseEnter={(_e, nd) => { setHovered(nd.id, true); updateHoverOverlay(nd); }}
+                onNodeMouseMove={(_e, nd) => { if (hoveredIds.has(nd.id)) updateHoverOverlay(nd); }}
+                onNodeMouseLeave={(_e, nd) => { setHovered(nd.id, false); updateHoverOverlay(null); }}
                 onlyRenderVisibleElements
                 onInit={(inst) => {
                     rfInstanceRef.current = inst;
@@ -858,6 +877,12 @@ export default function App() {
                 <MiniMap pannable zoomable nodeStrokeColor={(n: any): string => (n.type === 'group' ? 'transparent' : '#4f46e5')} nodeColor={(n: any): string => (n.type === 'group' ? 'transparent' : '#4f46e5')} />
                 <Controls />
             </ReactFlow>
+            {/* Global hover overlay rendered above canvas to avoid clipping */}
+            {hoverOverlay && (
+                <div style={{ position: 'fixed', left: hoverOverlay.x, top: hoverOverlay.y, pointerEvents: 'none', zIndex: 9999 }} className="label-constant">
+                    {hoverOverlay.label}
+                </div>
+            )}
             {progress && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none', fontSize: 14, opacity: .8 }}>⚙ {progress}</div>}
             {emptyMsg && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', fontSize: 14, opacity: .8 }}>{emptyMsg}</div>}
         </div>
