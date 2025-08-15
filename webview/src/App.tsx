@@ -545,7 +545,7 @@ export default function App() {
                             }}
                         />
                     ) : (
-                        <div className="node-placeholder-body">Zoom in to view code</div>
+                        <div className="node-placeholder-body" data-label={n.label}>Zoom in to view code</div>
                     )}
                     {/* default center handles */}
                     <Handle type="source" position={Position.Right} id={`line-0`} />
@@ -604,6 +604,7 @@ export default function App() {
                             setZoomOk(vp.zoom >= VISIBLE_ZOOM_THRESHOLD);
                             viewportRef.current = { x: vp.x, y: vp.y, zoom: vp.zoom };
                             prevVpRef.current = { x: vp.x, y: vp.y, zoom: vp.zoom };
+                            try { document.documentElement.style.setProperty('--rf-zoom', String(vp.zoom)); } catch { }
                         }
                         const container = document.querySelector('.react-flow') as HTMLElement | null;
                         const onWheel = (e: WheelEvent) => {
@@ -687,6 +688,7 @@ export default function App() {
                             // Keep zoom visibility threshold working
                             const nextZoomOk = latest.zoom >= VISIBLE_ZOOM_THRESHOLD;
                             if (nextZoomOk !== zoomOk) setZoomOk(nextZoomOk);
+                            try { document.documentElement.style.setProperty('--rf-zoom', String(latest.zoom)); } catch { }
 
                             // Compute deltas vs previous viewport (or last stored)
                             const prev = prevVpRef.current ?? viewportRef.current;
@@ -762,12 +764,16 @@ export default function App() {
                         const dtMs = Math.max(1, lastS.t - first.t);
 
                         // Optional extra safety: require minimal drag duration & distance
-                        if (dtMs < 40) { cancelFling(); gestureZoomedRef.current = false; gesturePannedRef.current = false; return; }
+                        const minDurationMs = 90; // require longer hold/move to allow fling
+                        const minDistancePx = 40; // require meaningful travel
+                        if (dtMs < minDurationMs || (Math.hypot(lastS.x - first.x, lastS.y - first.y) < minDistancePx)) {
+                            cancelFling(); gestureZoomedRef.current = false; gesturePannedRef.current = false; return;
+                        }
 
                         const vx = (lastS.x - first.x) / dtMs * 1000; // px/s
                         const vy = (lastS.y - first.y) / dtMs * 1000; // px/s
                         const speed = Math.hypot(vx, vy);
-                        const startThreshold = 450; // px/s
+                        const startThreshold = 700; // increase fling threshold to avoid accidental flings
 
                         if (speed >= startThreshold) {
                             startFling(vx, vy);

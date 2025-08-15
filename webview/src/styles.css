@@ -217,3 +217,125 @@ pre.hljs.wrap {
     color: #aaa;
     font-weight: 600;
 }
+
+/* zoom-aware label sizing and persistence */
+:root {
+    --label-min-size: 13px;
+    --label-max-size: 18px;
+}
+
+.label-fixed {
+    font-size: clamp(var(--label-min-size), calc(12px / var(--rf-zoom, 1)), var(--label-max-size));
+    line-height: 1.2;
+}
+
+/* Group container and selection highlight */
+.group-node {
+    width: 100%;
+    height: 100%;
+    position: relative;
+}
+
+.group-node[data-selected="true"]::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border: 2px solid rgba(99, 102, 241, 0.55);
+    border-radius: 12px;
+    pointer-events: none;
+}
+
+/* Existing group visuals */
+.react-flow__node-group {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding-top: 30px;
+    min-width: 200px;
+    min-height: 150px;
+    cursor: grab;
+    pointer-events: auto;
+}
+
+/* File header stays visible and scales */
+.file-node-header.label-fixed {
+    position: sticky;
+    top: 0;
+    background: #0b1220;
+    z-index: 2;
+}
+
+/* Large header placeholder when code is hidden */
+.node-placeholder-body::before {
+    content: attr(data-label);
+    display: block;
+    font-weight: 700;
+    font-size: clamp(14px, calc(24px / var(--rf-zoom, 1)), 28px);
+    color: #cdd6f4;
+    opacity: 0.9;
+    margin-bottom: 8px;
+}
+
+/* Stronger focus for accessibility */
+.react-flow__node:focus-within .file-node-header,
+.react-flow__node:focus-within .group-label {
+    outline: 2px solid #93c5fd;
+    outline-offset: 2px;
+}
+
+/* Hover/active emphasis for nodes */
+.react-flow__node:hover .file-node-header,
+.react-flow__node:hover .group-label {
+    color: #e5e7eb;
+}
+
+.react-flow__node:where(.selected),
+.react-flow__node:is(.selected) {
+    filter: drop-shadow(0 0 0.4rem rgba(99, 102, 241, 0.45));
+}
+
+.react-flow__node:hover .file-node,
+.react-flow__node:hover.react-flow__node-group {
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25) inset;
+}
+
+/* Larger label when hovered or selected for legibility */
+.react-flow__node:hover .label-fixed,
+.react-flow__node.selected .label-fixed {
+    font-weight: 800;
+    letter-spacing: 0.2px;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+}
+
+/* Zoom-aware larger sizes for headers (override base) */
+.file-node-header.label-fixed {
+    font-size: clamp(16px, calc(24px / var(--rf-zoom, 1)), 28px);
+}
+
+.group-label.label-fixed {
+    font-size: clamp(16px, calc(22px / var(--rf-zoom, 1)), 26px);
+}
+
+/* Dramatic hover/selected for headers */
+.react-flow__node:hover .file-node-header.label-fixed,
+.react-flow__node.selected .file-node-header.label-fixed {
+    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+    color: #fafafa;
+    background: linear-gradient(180deg, #111a2b, #0b1220);
+}
+
+.react-flow__node:hover .group-label.label-fixed,
+.react-flow__node.selected .group-label.label-fixed {
+    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+    color: #e5e7eb;
+}
+
+/* Stronger selected visuals on containers */
+.react-flow__node.selected .file-node {
+    box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.7) inset, 0 0 18px rgba(167, 139, 250, 0.35);
+}
+
+.react-flow__node.selected.react-flow__node-group {
+    border-color: rgba(167, 139, 250, 0.9) !important;
+    background: rgba(167, 139, 250, 0.08);
+}

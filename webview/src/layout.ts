@@ -92,22 +92,39 @@ export const getLayoutedElements = (nodes: Node[], edges: Edge[]): Promise<Node[
             (layoutedGraph as any).children.forEach((node: ElkNode) => traverse(node));
         }
 
-        // Autosize groups to wrap their children
+        // Autosize groups to wrap their children (bottom-up so ancestors expand too)
         const groupSizes = new Map<string, { width: number; height: number }>();
         const PADDING = { top: 50, left: 20, right: 20, bottom: 20 };
+        // one pass to compute direct children bounds
         childrenByParent.forEach((childIds, parentId) => {
             if (!childIds.length) return;
             let maxX = 0, maxY = 0;
             for (const cid of childIds) {
                 const pos = relPositions.get(cid) || { x: 0, y: 0 };
-                const sz = sizeOf.get(cid) || { width: 480, height: 280 };
-                maxX = Math.max(maxX, pos.x + sz.width);
-                maxY = Math.max(maxY, pos.y + sz.height);
+                const childSize = groupSizes.get(cid) || sizeOf.get(cid) || { width: 480, height: 280 };
+                maxX = Math.max(maxX, pos.x + childSize.width);
+                maxY = Math.max(maxY, pos.y + childSize.height);
             }
             const width = Math.max(220, Math.ceil(maxX + PADDING.right));
             const height = Math.max(160, Math.ceil(maxY + PADDING.bottom));
             groupSizes.set(parentId, { width, height });
         });
+        // propagate upward for 2 passes to cover grandparents etc.
+        for (let pass = 0; pass < 2; pass++) {
+            childrenByParent.forEach((childIds, parentId) => {
+                if (!childIds.length) return;
+                let maxX = 0, maxY = 0;
+                for (const cid of childIds) {
+                    const pos = relPositions.get(cid) || { x: 0, y: 0 };
+                    const childSize = groupSizes.get(cid) || sizeOf.get(cid) || { width: 480, height: 280 };
+                    maxX = Math.max(maxX, pos.x + childSize.width);
+                    maxY = Math.max(maxY, pos.y + childSize.height);
+                }
+                const width = Math.max(220, Math.ceil(maxX + PADDING.right));
+                const height = Math.max(160, Math.ceil(maxY + PADDING.bottom));
+                groupSizes.set(parentId, { width, height });
+            });
+        }
 
         return nodes.map(node => {
             const isChild = !!(node as any).parentNode;

@@ -1,10 +1,10 @@
 ﻿import React from 'react';
 import { Handle, Position } from 'reactflow';
 
-export function GroupNode({ data }: { data: { label: string } }) {
+export function GroupNode({ data, selected }: { data: { label: string }, selected?: boolean }) {
     return (
-        <div style={{ width: '100%', height: '100%', position: 'relative' }}>
-            <div className="group-label">{data.label}</div>
+        <div className="group-node" data-selected={selected ? 'true' : 'false'}>
+            <div className="group-label label-fixed">{data.label}</div>
         </div>
     );
 }
@@ -12,7 +12,7 @@ export function GroupNode({ data }: { data: { label: string } }) {
 export function FileNode({ data }: any) {
     return (
         <div className="file-node">
-            <div className="file-node-header">{data.label}</div>
+            <div className="file-node-header label-fixed">{data.label}</div>
             <div className="file-node-body">{data.preview}</div>
             <Handle type="source" position={Position.Right} />
             <Handle type="target" position={Position.Left} />
