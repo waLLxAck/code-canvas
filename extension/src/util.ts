@@ -4,8 +4,10 @@ import * as fs from 'fs';
 export type GraphNode = {
     id: string;
     label: string;
-    path: string;
-    lang: 'ts' | 'js' | 'tsx' | 'jsx' | 'py' | 'other';
+    path?: string;
+    lang?: 'ts' | 'js' | 'tsx' | 'jsx' | 'py' | 'other';
+    type: 'file' | 'group';
+    parentNode?: string;
 };
 
 export type EdgeLink = { symbolName?: string; targetLine: number };

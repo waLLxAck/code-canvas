@@ -121,6 +121,11 @@ pre.hljs.wrap {
     stroke: rgba(255, 255, 255, 0.2) !important;
 }
 
+/* hide folder/group nodes from minimap to reduce clutter */
+.react-flow__minimap-node.group {
+    display: none !important;
+}
+
 /* Allow extreme zooming */
 .react-flow__renderer,
 .react-flow__viewport {
@@ -170,7 +175,8 @@ pre.hljs.wrap {
 
 /* Defer offscreen work for heavy node content */
 .code-card {
-    content-visibility: auto;
+    /* disable content-visibility for nested group rendering to ensure code is painted */
+    content-visibility: visible;
     contain-intrinsic-size: 480px 280px;
     contain: layout paint size;
 }
@@ -179,4 +185,35 @@ pre.hljs.wrap {
 .file-node {
     backface-visibility: hidden;
     transform: translateZ(0);
+}
+
+/* Group node styles */
+.react-flow__node-group {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding-top: 30px;
+    min-width: 200px;
+    min-height: 150px;
+    cursor: grab;
+    /* don't block inner node interactions */
+    pointer-events: auto;
+}
+
+/* file nodes should render above groups */
+.react-flow__node-file {
+    z-index: 2;
+}
+
+.react-flow__node-group:hover {
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.group-label {
+    position: absolute;
+    top: 5px;
+    left: 15px;
+    font-size: 12px;
+    color: #aaa;
+    font-weight: 600;
 }

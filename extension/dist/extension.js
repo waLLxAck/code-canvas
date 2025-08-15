@@ -183,14 +183,60 @@ async function subgraph(index, seeds, maxNodes) {
       }
     }
   }
-  const nodes = Array.from(seen).map((f) => ({
-    id: makeSafeId(f),
-    label: path.basename(f),
-    path: f,
-    lang: index.lang.get(f) || "other"
+  const wsFolder = vscode3.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!wsFolder) return { nodes: [], edges: [] };
+  const rootDir = normalizePath(wsFolder);
+  const groupByDir = /* @__PURE__ */ new Map();
+  const ensureGroup = (dir) => {
+    const norm = normalizePath(dir);
+    if (groupByDir.has(norm)) return groupByDir.get(norm);
+    if (norm === rootDir) {
+      const rootGroup2 = { id: `group_${makeSafeId(norm)}`, parent: void 0, label: path.basename(norm) || norm };
+      groupByDir.set(norm, rootGroup2);
+      return rootGroup2;
+    }
+    const parentDir = path.dirname(norm);
+    const parent = ensureGroup(parentDir);
+    const label = path.basename(norm) || path.relative(parentDir, norm) || norm;
+    const node = { id: `group_${makeSafeId(norm)}`, parent: parent?.id, label };
+    groupByDir.set(norm, node);
+    return node;
+  };
+  const rootGroup = ensureGroup(rootDir);
+  const rootId = rootGroup.id;
+  const fileNodes = Array.from(seen).map((f) => {
+    const fileDir = path.dirname(f);
+    let cur = fileDir;
+    while (cur && cur.startsWith(rootDir)) {
+      ensureGroup(cur);
+      if (cur === rootDir) break;
+      const next = path.dirname(cur);
+      if (next === cur) break;
+      cur = next;
+    }
+    const parent = groupByDir.get(normalizePath(fileDir));
+    return {
+      id: makeSafeId(f),
+      label: path.basename(f),
+      path: f,
+      lang: index.lang.get(f) || "other",
+      type: "file",
+      parentNode: parent?.id
+    };
+  });
+  const groupNodes = Array.from(groupByDir.entries()).map(([dir, info]) => ({
+    id: info.id,
+    label: info.label,
+    type: "group",
+    path: dir,
+    parentNode: info.parent
+    // root has undefined parent, others point up the chain
   }));
+  const allNodes = [...fileNodes, ...groupNodes];
   const nodeIdByPath = /* @__PURE__ */ new Map();
-  for (const n of nodes) nodeIdByPath.set(n.path, n.id);
+  for (const n of fileNodes) {
+    if (n.path) nodeIdByPath.set(n.path, n.id);
+  }
   const edges = [];
   const symbolCache = /* @__PURE__ */ new Map();
   const getSymbols = async (file) => {
@@ -231,7 +277,7 @@ async function subgraph(index, seeds, maxNodes) {
       }
     }
   }
-  return { nodes, edges };
+  return { nodes: allNodes, edges };
 }
 function safeRead(p) {
   try {

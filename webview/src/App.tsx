@@ -1,14 +1,15 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import ReactFlow, { Background, Controls, MiniMap, Handle, Position, applyNodeChanges } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { nodeTypes } from './reactflow-node-types';
+import { nodeTypes, GroupNode } from './reactflow-node-types';
 import CodeCard from './code/CodeCard';
+import { getLayoutedElements } from './layout';
 
 // VS Code webview API
 declare global { interface Window { acquireVsCodeApi: any; __CODE_CACHE?: Record<string, string> } }
 const vscode = window.acquireVsCodeApi?.();
 
-type Node = { id: string; type: 'file'; position: { x: number; y: number }; data: any; style?: any; dragHandle?: string };
+type Node = { id: string; type?: 'file' | 'group'; position: { x: number; y: number }; data: any; style?: any; dragHandle?: string; parentNode?: string; width?: number; height?: number; extent?: any };
 
 export default function App() {
     const [graph, setGraph] = useState<{ nodes: any[]; edges: any[] }>({ nodes: [], edges: [] });
@@ -138,7 +139,7 @@ export default function App() {
             else if (msg.type === 'progress') setProgress(msg.msg || undefined);
             else if (msg.type === 'graph') {
                 setEmptyMsg(undefined); setProgress(undefined); setGraph(msg.graph);
-                const paths = (msg.graph?.nodes || []).map((n: any) => n.path);
+                const paths = (msg.graph?.nodes || []).filter((n: any) => n.type === 'file' && n.path).map((n: any) => n.path);
                 if (paths.length) startCodeLoadBatch(paths);
                 setRawEdges(msg.graph?.edges || []);
             }
@@ -148,14 +149,14 @@ export default function App() {
             } else if (msg.type === 'openChanged') {
                 openFiles(msg.files);
             } else if (msg.type === 'layout') {
-                layout('horizontal');
+                layout();
             } else if (msg.type === 'toggleRefs') {
                 setShowRefs(s => !s);
             } else if (msg.type === 'toggleEdges') {
                 setShowEdges(s => !s);
             } else if (msg.type === 'code') {
                 codeCacheRef.current[msg.path] = msg.content || '';
-                setNodes(prev => prev.map(n => n.data.path === msg.path ? { ...n, style: computeStyleFromContent(codeCacheRef.current[msg.path]) } : n));
+                setNodes(prev => prev.map(n => (n.type === 'file' && n.data.path === msg.path) ? { ...n, style: computeStyleFromContent(codeCacheRef.current[msg.path]) } : n));
                 onCodeArrived([msg.path]);
             } else if (msg.type === 'codeMany') {
                 const updated = new Set<string>();
@@ -163,15 +164,15 @@ export default function App() {
                     codeCacheRef.current[path] = content || '';
                     updated.add(path);
                 }
-                if (updated.size) setNodes(prev => prev.map(n => updated.has(n.data.path) ? { ...n, style: computeStyleFromContent(codeCacheRef.current[n.data.path]) } : n));
+                if (updated.size) setNodes(prev => prev.map(n => (n.type === 'file' && updated.has(n.data.path)) ? { ...n, style: computeStyleFromContent(codeCacheRef.current[n.data.path]) } : n));
                 onCodeArrived(Array.from(updated));
             } else if (msg.type === 'seedFolder') {
                 // The extension relays the path; filter current index graph by prefix and request code for those
                 const folder: string = msg.folder;
-                const selected = (graph.nodes || []).filter((n: any) => (n.path || '').startsWith(folder));
+                const selected = (graph.nodes || []).filter((n: any) => n.type === 'file' && (n.path || '').startsWith(folder));
                 setNodes(prev => selected.map((n: any, i: number) => ({
-                    id: n.id, type: 'file', position: { x: (i % 3) * 1200, y: Math.floor(i / 3) * 1000 },
-                    style: computeStyleFromContent(codeCacheRef.current[n.path] || ''), dragHandle: '.file-node-header', data: { label: n.label, preview: (<div className="preview">{n.path}</div>), path: n.path, lang: n.lang }
+                    id: n.id, type: n.type, position: { x: (i % 3) * 1200, y: Math.floor(i / 3) * 1000 },
+                    parentNode: n.parentNode, style: computeStyleFromContent(codeCacheRef.current[n.path] || ''), dragHandle: '.file-node-header', data: { label: n.label, preview: (<div className="preview">{n.path}</div>), path: n.path, lang: n.lang }
                 })));
                 const paths = selected.map((n: any) => n.path);
                 if (paths.length) startCodeLoadBatch(paths);
@@ -182,15 +183,21 @@ export default function App() {
     }, []);
 
     useEffect(() => { // build ReactFlow nodes
-        const initial: Node[] = graph.nodes.map((n: any, i: number) => ({
+        const newNodes: Node[] = (graph.nodes || []).map((n: any) => ({
             id: n.id,
-            type: 'file',
-            position: { x: (i % 3) * 1200, y: Math.floor(i / 3) * 1000 },
-            style: computeStyleFromContent(codeCacheRef.current[n.path] || ''),
-            dragHandle: '.file-node-header',
-            data: { label: n.label, preview: (<div className="preview">{n.path}</div>), path: n.path, lang: n.lang }
+            type: n.type,
+            position: { x: 0, y: 0 },
+            parentNode: n.parentNode,
+            extent: n.type === 'file' && n.parentNode ? 'parent' : undefined,
+            dragHandle: n.type === 'file' ? '.file-node-header' : undefined,
+            data: n.type === 'file'
+                ? { label: n.label, preview: (<div className="preview">{n.path}</div>), path: n.path, lang: n.lang }
+                : { label: n.label },
+            style: n.type === 'group' ? { width: 300, height: 200 } : computeStyleFromContent(codeCacheRef.current[n.path] || ''),
+            // Ensure files render above their groups for interaction & visibility
+            zIndex: n.type === 'group' ? 0 : 1,
         }));
-        const e = (graph.edges || []).map((e: any) => ({
+        const newEdges = (graph.edges || []).map((e: any) => ({
             id: e.id,
             source: e.source,
             target: e.target,
@@ -198,7 +205,12 @@ export default function App() {
             sourceHandle: (e.sourceLine ?? null) !== null && (e.sourceLine ?? undefined) !== undefined ? `line-${e.sourceLine}` : undefined,
             targetHandle: (e.targetLine ?? null) !== null && (e.targetLine ?? undefined) !== undefined ? `line-${e.targetLine}` : undefined
         }));
-        setNodes(initial); setEdges(e);
+        setNodes(newNodes);
+        setEdges(newEdges);
+        setRawEdges(newEdges);
+        if (newNodes.length > 0) {
+            setTimeout(() => layout(), 50);
+        }
         hasFitOnceRef.current = false;
     }, [graph]);
 
@@ -210,13 +222,19 @@ export default function App() {
         setNodes(prev => {
             const map = new Map(prev.map(n => [n.id, n]));
             for (const n of g.nodes) if (!map.has(n.id)) {
-                newPaths.push(n.path);
+                if (n.type === 'file' && n.path) newPaths.push(n.path);
                 map.set(n.id, {
-                    id: n.id, type: 'file',
+                    id: n.id,
+                    type: n.type,
                     position: { x: Math.random() * 800, y: Math.random() * 600 },
-                    style: computeStyleFromContent(codeCacheRef.current[n.path] || ''),
-                    dragHandle: '.file-node-header',
-                    data: { label: n.label, preview: <div className="preview">{n.path}</div>, path: n.path, lang: n.lang }
+                    parentNode: n.parentNode,
+                    extent: n.type === 'file' && n.parentNode ? 'parent' : undefined,
+                    style: n.type === 'group' ? { width: 300, height: 200 } : computeStyleFromContent(codeCacheRef.current[n.path] || ''),
+                    dragHandle: n.type === 'file' ? '.file-node-header' : undefined,
+                    data: n.type === 'file'
+                        ? { label: n.label, preview: <div className="preview">{n.path}</div>, path: n.path, lang: n.lang }
+                        : { label: n.label },
+                    zIndex: n.type === 'group' ? 0 : 1,
                 } as any);
             }
             return Array.from(map.values());
@@ -233,14 +251,17 @@ export default function App() {
         setNodes(prev => {
             const ids = new Set(prev.map(p => p.id));
             const add: Node[] = graph.nodes
-                .filter((n: any) => paths.includes(n.path) && !ids.has(n.id))
+                .filter((n: any) => n.type === 'file' && paths.includes(n.path) && !ids.has(n.id))
                 .map((n: any, i: number) => ({
                     id: n.id,
-                    type: 'file',
+                    type: n.type,
                     position: { x: 50 + i * 30, y: 60 + i * 30 },
+                    parentNode: n.parentNode,
+                    extent: n.parentNode ? 'parent' : undefined,
                     style: { width: 480, height: 280 },
                     dragHandle: '.file-node-header',
-                    data: { label: n.label, preview: <div className="preview">{n.path}</div>, path: n.path, lang: n.lang }
+                    data: { label: n.label, preview: <div className="preview">{n.path}</div>, path: n.path, lang: n.lang },
+                    zIndex: 1,
                 }));
             return [...prev, ...add];
         });
@@ -253,7 +274,7 @@ export default function App() {
         if (autoLayoutTimer.current) {
             window.clearTimeout(autoLayoutTimer.current);
         }
-        autoLayoutTimer.current = window.setTimeout(() => { layout('horizontal'); }, 250);
+        autoLayoutTimer.current = window.setTimeout(() => { layout(); }, 250);
     }
 
     // Track pending code loads and run one layout after all code in a batch has loaded
@@ -270,7 +291,7 @@ export default function App() {
         }
         // Give the DOM a moment so CodeCard measurements propagate before layout
         afterFullLoadLayoutTimer.current = window.setTimeout(() => {
-            layout('horizontal');
+            layout();
             afterFullLoadLayoutTimer.current = null;
         }, 120);
     }
@@ -301,21 +322,34 @@ export default function App() {
         if (any) maybeRunLayoutAfterFullLoad();
     }
 
-    async function layout(_algo: 'horizontal', forceFit: boolean = false) {
-        lastAlgo.current = 'horizontal';
-        const currentNodes = nodesRef.current as any as Node[];
-        let currentX = 40;
-        const y = 60;
-        const spacing = 20;
-        const laidOut = currentNodes.map(n => {
-            const measured = measuredSizeRef.current[n.id];
-            const width = (n?.style?.width ?? measured?.width ?? 480);
-            const pos = { x: currentX, y };
-            currentX += width + spacing;
-            return { ...n, position: pos } as any;
-        });
-        setNodes(laidOut as any);
-    }
+    const layout = async () => {
+        const nodesToLayout = nodesRef.current.map(n => ({
+            ...n,
+            width: n.style?.width || measuredSizeRef.current[n.id]?.width || 480,
+            height: n.style?.height || measuredSizeRef.current[n.id]?.height || 280,
+            // React Flow expects children to be inside parent bounds, pass through parentNode for layout
+            parentNode: (n as any).parentNode,
+            type: (n as any).type,
+        }));
+        if (nodesToLayout.length === 0) return;
+        try {
+            const layoutedNodes = await getLayoutedElements(nodesToLayout, edgesRef.current);
+            setNodes(layoutedNodes as any);
+        } catch (error) {
+            // Fallback to simple horizontal layout if ELK fails
+            console.warn('ELK layout failed, using fallback:', error);
+            let currentX = 40;
+            const y = 60;
+            const spacing = 20;
+            const fallbackNodes = nodesToLayout.map(n => {
+                const width = n.width || 480;
+                const pos = { x: currentX, y };
+                currentX += width + spacing;
+                return { ...n, position: pos };
+            });
+            setNodes(fallbackNodes);
+        }
+    };
 
     function onOpenFile(n: Node) { vscode?.postMessage({ type: 'openFile', path: n.data.path }); }
 
@@ -538,13 +572,14 @@ export default function App() {
                     })}
                 </div>
             );
-        }
+        },
+        group: GroupNode,
     }), [edges, zoomOk, wrap]);
 
     return (
         <div className="root">
             <div className="toolbar">
-                <button onClick={() => layout('horizontal', true)}>Relayout</button>
+                <button onClick={() => layout()}>Relayout</button>
                 <button onClick={() => vscode?.postMessage({ type: 'loadMore' })}>Load 25 more</button>
                 <button onClick={() => vscode?.postMessage({ type: 'requestChanged' })}>Open Changed (⇧O)</button>
                 <button onClick={() => vscode?.postMessage({ type: 'requestGraph' })}>Reload</button>
@@ -770,7 +805,7 @@ export default function App() {
                 maxZoom={8}
             >
                 <Background />
-                <MiniMap pannable zoomable />
+                <MiniMap pannable zoomable nodeStrokeColor={(n: any): string => (n.type === 'group' ? 'transparent' : '#4f46e5')} nodeColor={(n: any): string => (n.type === 'group' ? 'transparent' : '#4f46e5')} />
                 <Controls />
             </ReactFlow>
             {progress && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none', fontSize: 14, opacity: .8 }}>⚙ {progress}</div>}

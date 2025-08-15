@@ -1,6 +1,14 @@
 ﻿import React from 'react';
 import { Handle, Position } from 'reactflow';
 
+export function GroupNode({ data }: { data: { label: string } }) {
+    return (
+        <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+            <div className="group-label">{data.label}</div>
+        </div>
+    );
+}
+
 export function FileNode({ data }: any) {
     return (
         <div className="file-node">
@@ -12,4 +20,4 @@ export function FileNode({ data }: any) {
     );
 }
 
-export const nodeTypes = { file: FileNode } as const;
+export const nodeTypes = { file: FileNode, group: GroupNode } as const;

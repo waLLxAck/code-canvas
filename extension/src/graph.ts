@@ -111,15 +111,69 @@ export async function subgraph(index: Index, seeds: string[], maxNodes: number):
         }
     }
 
-    const nodes = Array.from(seen).map(f => ({
-        id: makeSafeId(f),
-        label: path.basename(f),
-        path: f,
-        lang: (index.lang.get(f) || 'other') as any
-    }));
+    // Build recursive group hierarchy from workspace root
+    const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!wsFolder) return { nodes: [], edges: [] };
+    const rootDir = normalizePath(wsFolder);
+
+    const groupByDir = new Map<string, { id: string; parent?: string; label: string }>();
+    const ensureGroup = (dir: string): { id: string; parent?: string; label: string } => {
+        const norm = normalizePath(dir);
+        if (groupByDir.has(norm)) return groupByDir.get(norm)!;
+        if (norm === rootDir) {
+            // Represent root as a group as well so deeper folders can attach
+            const rootGroup = { id: `group_${makeSafeId(norm)}`, parent: undefined, label: path.basename(norm) || norm };
+            groupByDir.set(norm, rootGroup);
+            return rootGroup;
+        }
+        const parentDir = path.dirname(norm);
+        const parent = ensureGroup(parentDir);
+        const label = path.basename(norm) || path.relative(parentDir, norm) || norm;
+        const node = { id: `group_${makeSafeId(norm)}`, parent: parent?.id, label };
+        groupByDir.set(norm, node);
+        return node;
+    };
+
+    const rootGroup = ensureGroup(rootDir);
+    const rootId = rootGroup.id;
+    const fileNodes = Array.from(seen).map(f => {
+        const fileDir = path.dirname(f);
+        // Ensure all ancestors from root to this file's dir are present
+        let cur = fileDir;
+        while (cur && cur.startsWith(rootDir)) {
+            ensureGroup(cur);
+            if (cur === rootDir) break;
+            const next = path.dirname(cur);
+            if (next === cur) break;
+            cur = next;
+        }
+        const parent = groupByDir.get(normalizePath(fileDir));
+        return {
+            id: makeSafeId(f),
+            label: path.basename(f),
+            path: f,
+            lang: (index.lang.get(f) || 'other') as any,
+            type: 'file' as const,
+            parentNode: parent?.id,
+        };
+    });
+
+    // Emit unique group nodes including the root wrapper
+    const groupNodes = Array.from(groupByDir.entries())
+        .map(([dir, info]) => ({
+            id: info.id,
+            label: info.label,
+            type: 'group' as const,
+            path: dir,
+            parentNode: info.parent, // root has undefined parent, others point up the chain
+        }));
+
+    const allNodes = [...fileNodes, ...groupNodes];
 
     const nodeIdByPath = new Map<string, string>();
-    for (const n of nodes) nodeIdByPath.set(n.path, n.id);
+    for (const n of fileNodes) {
+        if (n.path) nodeIdByPath.set(n.path, n.id);
+    }
 
     const edges: Graph['edges'] = [];
     const symbolCache = new Map<string, Awaited<ReturnType<typeof getDocumentSymbols>>>();
@@ -145,18 +199,15 @@ export async function subgraph(index: Index, seeds: string[], maxNodes: number):
                 const links: EdgeLink[] = [];
                 try {
                     const syms = await getSymbols(t);
-                    // Find all import statements for this target file and map names heuristically
+                    // Map symbol targets heuristically
                     for (const { spec, line } of entries) {
                         const resolved = (index.lang.get(s) === 'py') ? resolvePy(path.dirname(s), s, spec) : resolveJsTs(path.dirname(s), s, spec);
                         const resolvedNorm = resolved ? normalizePath(resolved) : undefined;
                         if (resolvedNorm !== t) continue;
-                        // Heuristic: try to split last path part as module name, but prefer matching symbols by name presence in the source file near import
-                        // For Phase 2 scope, we will not fully parse named specifiers; instead, map to best top-level symbol (class/func/var) if unique, else fallback 0
                         let targetLine = 0;
                         const topLevel = syms.filter(sy => sy.range?.start?.line != null);
                         if (topLevel.length === 1) targetLine = topLevel[0].range.start.line;
                         else if (topLevel.length > 1) {
-                            // pick first non-trivial symbol (Class, Function) if present
                             const preferred = topLevel.find(sy => sy.kind === vscode.SymbolKind.Class || sy.kind === vscode.SymbolKind.Function || sy.kind === vscode.SymbolKind.Method) || topLevel[0];
                             targetLine = preferred.range.start.line;
                         }
@@ -171,7 +222,7 @@ export async function subgraph(index: Index, seeds: string[], maxNodes: number):
         }
     }
 
-    return { nodes, edges };
+    return { nodes: allNodes, edges };
 }
 
 function safeRead(p: string) { try { return fs.readFileSync(p, 'utf8'); } catch { return ''; } }
