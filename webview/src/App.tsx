@@ -44,6 +44,16 @@ export default function App() {
     const isFlingingRef = useRef<boolean>(false);
     const flingRafRef = useRef<number | null>(null);
     const velocityRef = useRef<{ vx: number; vy: number }>({ vx: 0, vy: 0 });
+    const lastInputRef = useRef<'wheel' | 'drag' | null>(null);
+    const zoomActiveRef = useRef<boolean>(false);
+    const lastZoomTimeRef = useRef<number>(0);
+    const prevVpRef = useRef<{ x: number; y: number; zoom: number } | null>(null);
+    const gestureZoomedRef = useRef<boolean>(false);
+    const gesturePannedRef = useRef<boolean>(false);
+    const wheelCooldownUntilRef = useRef<number>(0);
+
+    const WHEEL_COOLDOWN_MS = 450;   // ~ matches your 420ms smooth class removal
+    const ZOOM_EPS = 1e-4;           // minimal zoom delta treated as "zoom happened"
 
     function cancelFling(): void {
         if (flingRafRef.current != null) {
@@ -51,14 +61,12 @@ export default function App() {
             flingRafRef.current = null;
         }
         isFlingingRef.current = false;
-        const vpEl = document.querySelector('.react-flow__viewport');
-        if (!isDraggingViewRef.current) vpEl?.classList.remove('no-animate');
     }
+
+
 
     function startFling(initialVx: number, initialVy: number): void {
         cancelFling();
-        const vpEl = document.querySelector('.react-flow__viewport');
-        vpEl?.classList.add('no-animate');
         isFlingingRef.current = true;
         velocityRef.current = { vx: initialVx, vy: initialVy };
         let last = performance.now();
@@ -560,22 +568,35 @@ export default function App() {
                         if (vp) {
                             setZoomOk(vp.zoom >= VISIBLE_ZOOM_THRESHOLD);
                             viewportRef.current = { x: vp.x, y: vp.y, zoom: vp.zoom };
+                            prevVpRef.current = { x: vp.x, y: vp.y, zoom: vp.zoom };
                         }
-                        // Smooth wheel-zoom: toggle viewport transition class during zoom bursts
                         const container = document.querySelector('.react-flow') as HTMLElement | null;
                         const onWheel = (e: WheelEvent) => {
                             try {
+                                const now = performance.now();
+                                lastInputRef.current = 'wheel';
+                                lastZoomTimeRef.current = now;
+                                zoomActiveRef.current = true;
+
+                                // NEW: this gesture has zoom; block fling until cooldown passes
+                                gestureZoomedRef.current = true;
+                                wheelCooldownUntilRef.current = now + WHEEL_COOLDOWN_MS;
+
                                 const vpEl = document.querySelector('.react-flow__viewport');
                                 if (!vpEl) return;
                                 vpEl.classList.add('zoom-smooth');
+
+                                // Zoom invalidates drag samples
+                                moveSamplesRef.current = [];
+
                                 if (zoomSmoothTimerRef.current) window.clearTimeout(zoomSmoothTimerRef.current);
                                 zoomSmoothTimerRef.current = window.setTimeout(() => {
                                     vpEl.classList.remove('zoom-smooth');
-                                }, 120);
+                                    // let onMoveEnd clear zoomActive; we still have cooldown guard
+                                }, 420);
                             } catch { }
                         };
                         container?.addEventListener('wheel', onWheel, { passive: true } as any);
-                        // cleanup on unmount
                         (window as any).__rf_wheel_cleanup = () => container?.removeEventListener('wheel', onWheel as any);
                     } catch { }
                 }}
@@ -586,8 +607,8 @@ export default function App() {
                         el?.classList.add('no-animate');
                         const vpEl = document.querySelector('.react-flow__viewport');
                         vpEl?.classList.remove('zoom-smooth');
-                        vpEl?.classList.add('no-animate');
                         isDraggingViewRef.current = true;
+                        lastInputRef.current = 'drag';
                         cancelFling();
                         moveSamplesRef.current = [];
                     } catch { }
@@ -596,57 +617,132 @@ export default function App() {
                     try {
                         const el = document.querySelector(`.react-flow__node[data-id="${node.id}"]`);
                         el?.classList.remove('no-animate');
-                        const vpEl = document.querySelector('.react-flow__viewport');
-                        vpEl?.classList.remove('no-animate');
                         isDraggingViewRef.current = false;
                     } catch { }
                 }}
                 onMoveStart={() => {
-                    // User begins panning
+                    // CHANGED: treat this as a new potential pan gesture; we'll detect zoom in onMove
                     cancelFling();
                     moveSamplesRef.current = [];
-                    try { const el = document.querySelector('.react-flow__viewport'); el?.classList.remove('zoom-smooth'); el?.classList.add('no-animate'); } catch { }
+                    gestureZoomedRef.current = false; // NEW
+                    gesturePannedRef.current = false; // NEW
+                    zoomActiveRef.current = false;    // NEW
+                    lastInputRef.current = 'drag';    // we assume pan until onMove proves zoom
+                    isDraggingViewRef.current = true;
+
+                    try {
+                        const el = document.querySelector('.react-flow__viewport');
+                        el?.classList.remove('zoom-smooth');
+                    } catch { }
                 }}
                 onMove={(_evt, vp) => {
                     try {
                         if (!vp) return;
                         if (isFlingingRef.current) { viewportRef.current = { x: vp.x, y: vp.y, zoom: vp.zoom }; return; }
+
                         pendingVpRef.current = vp;
                         if (moveFrameRef.current != null) return;
                         moveFrameRef.current = window.requestAnimationFrame(() => {
                             moveFrameRef.current = null;
                             const latest = pendingVpRef.current; pendingVpRef.current = null;
                             if (!latest) return;
-                            const newZoom = latest.zoom;
-                            const nextZoomOk = newZoom >= VISIBLE_ZOOM_THRESHOLD;
-                            if (nextZoomOk !== zoomOk) setZoomOk(nextZoomOk);
-                            viewportRef.current = { x: latest.x, y: latest.y, zoom: latest.zoom };
-                            // Record samples for velocity estimation
+
                             const now = performance.now();
-                            moveSamplesRef.current.push({ t: now, x: latest.x, y: latest.y });
-                            // Keep only last ~120ms of samples
-                            const cutoff = now - 120;
-                            if (moveSamplesRef.current.length > 1) {
-                                let i = 0; while (i < moveSamplesRef.current.length && moveSamplesRef.current[i].t < cutoff) i++;
-                                if (i > 0) moveSamplesRef.current.splice(0, i);
+
+                            // Keep zoom visibility threshold working
+                            const nextZoomOk = latest.zoom >= VISIBLE_ZOOM_THRESHOLD;
+                            if (nextZoomOk !== zoomOk) setZoomOk(nextZoomOk);
+
+                            // Compute deltas vs previous viewport (or last stored)
+                            const prev = prevVpRef.current ?? viewportRef.current;
+                            const dz = latest.zoom - prev.zoom;
+                            const dx = latest.x - prev.x;
+                            const dy = latest.y - prev.y;
+
+                            viewportRef.current = { x: latest.x, y: latest.y, zoom: latest.zoom };
+                            prevVpRef.current = { x: latest.x, y: latest.y, zoom: latest.zoom }; // NEW
+
+                            // NEW: if zoom changed at all in this gesture, mark as zoom and do not record pan samples
+                            if (Math.abs(dz) > ZOOM_EPS) {
+                                gestureZoomedRef.current = true;
+                                zoomActiveRef.current = true;
+                                lastInputRef.current = 'wheel';   // this wasn't a pure drag
+                                lastZoomTimeRef.current = now;
+                                moveSamplesRef.current = [];      // discard any pan samples
+                                return;
+                            }
+
+                            // Otherwise, it's a pan delta
+                            if (lastInputRef.current === 'drag') {
+                                gesturePannedRef.current = true;
+                                // Record movement sample for fling calculation
+                                moveSamplesRef.current.push({ t: now, x: latest.x, y: latest.y });
+
+                                // Keep only last ~120ms of drag samples
+                                const cutoff = now - 120;
+                                if (moveSamplesRef.current.length > 1) {
+                                    let i = 0; while (i < moveSamplesRef.current.length && moveSamplesRef.current[i].t < cutoff) i++;
+                                    if (i > 0) moveSamplesRef.current.splice(0, i);
+                                }
                             }
                         });
                     } catch { }
                 }}
                 onMoveEnd={() => {
                     try {
-                        // Estimate velocity from last samples
+                        isDraggingViewRef.current = false;
+                        const now = performance.now();
+
+                        // NEW: hard gates — if any zoom happened during this gesture or we're within wheel cooldown, do not fling
+                        const inWheelCooldown = now < wheelCooldownUntilRef.current || (now - lastZoomTimeRef.current) < WHEEL_COOLDOWN_MS;
+                        if (gestureZoomedRef.current || inWheelCooldown) {
+                            cancelFling();
+                            // reset gesture flags
+                            gestureZoomedRef.current = false;
+                            gesturePannedRef.current = false;
+                            zoomActiveRef.current = false;
+                            moveSamplesRef.current = [];
+                            return;
+                        }
+
+                        // Only fling after a genuine drag gesture with samples
+                        if (lastInputRef.current !== 'drag' || !gesturePannedRef.current) {
+                            cancelFling();
+                            gestureZoomedRef.current = false;
+                            gesturePannedRef.current = false;
+                            moveSamplesRef.current = [];
+                            return;
+                        }
+
                         const samples = moveSamplesRef.current;
-                        if (!samples || samples.length < 2) { cancelFling(); const el = document.querySelector('.react-flow__viewport'); el?.classList.remove('no-animate'); return; }
+                        if (!samples || samples.length < 2) {
+                            cancelFling();
+                            gestureZoomedRef.current = false;
+                            gesturePannedRef.current = false;
+                            return;
+                        }
+
                         const first = samples[0];
                         const lastS = samples[samples.length - 1];
                         const dtMs = Math.max(1, lastS.t - first.t);
+
+                        // Optional extra safety: require minimal drag duration & distance
+                        if (dtMs < 40) { cancelFling(); gestureZoomedRef.current = false; gesturePannedRef.current = false; return; }
+
                         const vx = (lastS.x - first.x) / dtMs * 1000; // px/s
                         const vy = (lastS.y - first.y) / dtMs * 1000; // px/s
                         const speed = Math.hypot(vx, vy);
-                        const startThreshold = 450; // px/s to start fling
-                        if (speed >= startThreshold) startFling(vx, vy);
-                        else { cancelFling(); const el = document.querySelector('.react-flow__viewport'); el?.classList.remove('no-animate'); }
+                        const startThreshold = 450; // px/s
+
+                        if (speed >= startThreshold) {
+                            startFling(vx, vy);
+                        } else {
+                            cancelFling();
+                        }
+
+                        // reset gesture flags after deciding
+                        gestureZoomedRef.current = false;
+                        gesturePannedRef.current = false;
                     } catch { }
                 }}
                 onEdgeClick={(_e, edge: any) => {
