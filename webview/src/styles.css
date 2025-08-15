@@ -168,9 +168,17 @@ pre.hljs.wrap {
     height: calc(100% - 30px);
     display: grid;
     place-items: center;
+    align-content: center;
+    gap: 6px;
     color: #94a3b8;
     font-size: 12px;
     opacity: 0.9;
+}
+
+.node-placeholder-title {
+    font-weight: 900;
+    line-height: 1.1;
+    letter-spacing: 0.2px;
 }
 
 /* Defer offscreen work for heavy node content */
@@ -185,6 +193,35 @@ pre.hljs.wrap {
 .file-node {
     backface-visibility: hidden;
     transform: translateZ(0);
+    position: relative;
+    /* enable proper z-index layering for overlays */
+}
+
+/* keep code content below overlays */
+.code-card {
+    z-index: 1;
+    position: relative;
+}
+
+.file-node-header {
+    z-index: 2;
+    position: relative;
+}
+
+.group-label {
+    z-index: 1001;
+    position: absolute;
+    pointer-events: none;
+}
+
+/* Hover label should sit on top of everything inside the node */
+.label-constant {
+    z-index: 1002;
+}
+
+/* Show constant label also when selected */
+.react-flow__node.selected .label-constant {
+    opacity: 1;
 }
 
 /* Group node styles */
@@ -269,11 +306,26 @@ pre.hljs.wrap {
 .node-placeholder-body::before {
     content: attr(data-label);
     display: block;
-    font-weight: 700;
-    font-size: clamp(14px, calc(24px / var(--rf-zoom, 1)), 28px);
+    font-weight: 800;
+    font-size: clamp(22px, calc(440px / var(--rf-zoom, 1)), 72px);
+    /* scale with node width via container queries below */
     color: #cdd6f4;
     opacity: 0.9;
     margin-bottom: 8px;
+    text-wrap: balance;
+    text-align: center;
+}
+
+/* Grow placeholder header to fit node width */
+@container node-size (min-width: 600px) {
+    .node-placeholder-body::before {
+        font-size: clamp(28px, calc(660px / var(--rf-zoom, 1)), 92px);
+    }
+}
+
+/* Establish container context on file-node */
+.file-node {
+    container-type: inline-size;
 }
 
 /* Stronger focus for accessibility */
@@ -338,4 +390,42 @@ pre.hljs.wrap {
 .react-flow__node.selected.react-flow__node-group {
     border-color: rgba(167, 139, 250, 0.9) !important;
     background: rgba(167, 139, 250, 0.08);
+}
+
+/* Constant-size hover label that ignores viewport zoom */
+.label-constant {
+    position: absolute;
+    inset: 8px auto auto 8px;
+    padding: calc(6px / var(--rf-zoom, 1)) calc(10px / var(--rf-zoom, 1));
+    font-size: calc(14px / var(--rf-zoom, 1));
+    /* counteract zoom to stay constant visual size */
+    line-height: 1.2;
+    font-weight: 800;
+    background: rgba(2, 6, 23, 0.85);
+    border: calc(1px / var(--rf-zoom, 1)) solid rgba(99, 102, 241, 0.6);
+    border-radius: calc(8px / var(--rf-zoom, 1));
+    color: #e5e7eb;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateZ(0);
+    transition: opacity 120ms var(--ease-smooth), transform 120ms var(--ease-smooth);
+}
+
+/* Show on hover or focus */
+.react-flow__node:hover .label-constant,
+.react-flow__node:focus-within .label-constant {
+    opacity: 1;
+    transform: translateY(-2px);
+    z-index: 3;
+}
+
+/* Increase top padding for groups much more to avoid overlap with inner nodes */
+.react-flow__node-group {
+    padding-top: 60px;
+}
+
+/* Keep group label elevated above children */
+.group-label {
+    top: 14px;
+    left: 18px;
 }

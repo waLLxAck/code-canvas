@@ -504,11 +504,45 @@ export default function App() {
         return () => window.removeEventListener('keydown', onKey);
     }, [nodes]);
 
+    useEffect(() => {
+        const down = (e: KeyboardEvent) => {
+            if (e.code === 'Space') {
+                try { rfInstanceRef.current?.setPaneDragging?.(true); } catch { }
+            }
+        };
+        const up = (e: KeyboardEvent) => {
+            if (e.code === 'Space') {
+                try { rfInstanceRef.current?.setPaneDragging?.(false); } catch { }
+            }
+        };
+        window.addEventListener('keydown', down);
+        window.addEventListener('keyup', up);
+        return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
+    }, []);
+
     // render code previews lazily inside each node
 
     const VISIBLE_ZOOM_THRESHOLD = 0.65; // below this, render placeholder
 
     const codeRefs = useRef<Record<string, React.RefObject<import('./code/CodeCard').CodeCardHandle>>>({});
+    const hoveredIdsRef = useRef<Set<string>>(new Set());
+    const [hoveredIds, setHoveredIds] = useState<Set<string>>(new Set());
+
+    function setHovered(id: string | null, on: boolean) {
+        const next = new Set(hoveredIdsRef.current);
+        if (id) {
+            if (on) next.add(id); else next.delete(id);
+        }
+        hoveredIdsRef.current = next; setHoveredIds(next);
+    }
+
+    function computePlaceholderFontPx(nodeId: string, label: string): number {
+        const width = (measuredSizeRef.current[nodeId]?.width ?? 480) * 0.9;
+        const chars = Math.max(1, (label || '').length);
+        const px = Math.min(96, Math.max(18, Math.floor(width / (chars * 0.55))));
+        return Math.max(18, px);
+    }
+
     const nodeTypesLocal = useMemo(() => ({
         file: (p: any) => {
             const n = p.data;
@@ -523,9 +557,11 @@ export default function App() {
                 }
                 return Array.from(s).sort((a, b) => a - b).slice(0, 200);
             })();
+            const isHover = hoveredIds.has(p.id) || !!p.selected;
             return (
                 <div className="file-node" style={{ opacity: n.dim ? 0.25 : 1 }}>
-                    <div className="file-node-header" onDoubleClick={() => onOpenFile(p)}>{n.label}</div>
+                    <div className="file-node-header label-fixed" onDoubleClick={() => onOpenFile(p)}>{n.label}</div>
+                    <div className="hover-label label-constant" style={isHover ? { opacity: 1 } : undefined}>{n.label}</div>
                     {shouldShowCode ? (
                         <CodeCard
                             ref={codeRefs.current[p.id]}
@@ -545,7 +581,10 @@ export default function App() {
                             }}
                         />
                     ) : (
-                        <div className="node-placeholder-body" data-label={n.label}>Zoom in to view code</div>
+                        <div className="node-placeholder-body">
+                            <div className="node-placeholder-title" style={{ fontSize: computePlaceholderFontPx(p.id, n.label) }}>{n.label}</div>
+                            <div style={{ opacity: 0.75 }}>Zoom in to view code</div>
+                        </div>
                     )}
                     {/* default center handles */}
                     <Handle type="source" position={Position.Right} id={`line-0`} />
@@ -574,7 +613,7 @@ export default function App() {
             );
         },
         group: GroupNode,
-    }), [edges, zoomOk, wrap]);
+    }), [edges, zoomOk, wrap, hoveredIds]);
 
     return (
         <div className="root">
@@ -595,6 +634,11 @@ export default function App() {
                 nodes={nodes as any}
                 edges={showEdges ? (focusIds ? (edges as any[]).filter(e => focusIds.has(e.source) && focusIds.has(e.target)) : edges) : []}
                 nodeTypes={nodeTypesLocal as any}
+                panOnDrag={[1, 2]} /* left or middle mouse */
+                panOnScroll={true}
+                selectionOnDrag
+                onNodeMouseEnter={(_e, nd) => setHovered(nd.id, true)}
+                onNodeMouseLeave={(_e, nd) => setHovered(nd.id, false)}
                 onlyRenderVisibleElements
                 onInit={(inst) => {
                     rfInstanceRef.current = inst;
