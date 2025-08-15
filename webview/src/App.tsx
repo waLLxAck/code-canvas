@@ -572,6 +572,7 @@ export default function App() {
     const hoveredIdsRef = useRef<Set<string>>(new Set());
     const [hoveredIds, setHoveredIds] = useState<Set<string>>(new Set());
     const [hoverOverlay, setHoverOverlay] = useState<{ id: string; label: string; x: number; y: number } | null>(null);
+    const [selectedOverlay, setSelectedOverlay] = useState<{ id: string; label: string; x: number; y: number } | null>(null);
     const selectedIdsRef = useRef<string[]>([]);
     useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
 
@@ -596,6 +597,20 @@ export default function App() {
         } catch { setHoverOverlay(null); }
     }
 
+    function updateSelectedOverlayById(id: string | null) {
+        if (!id) { setSelectedOverlay(null); return; }
+        try {
+            const el = document.querySelector(`.react-flow__node[data-id="${id}"]`) as HTMLElement | null;
+            if (!el) { setSelectedOverlay(null); return; }
+            const r = el.getBoundingClientRect();
+            const sx = Math.round(r.left + 8);
+            const sy = Math.round(r.top + 8);
+            const node = nodesRef.current.find(n => n.id === id);
+            const label = ((node as any)?.data?.label) || id;
+            setSelectedOverlay({ id, label, x: sx, y: sy });
+        } catch { setSelectedOverlay(null); }
+    }
+
     function computePlaceholderFontPx(label: string, widthPx: number | undefined): number {
         const width = Math.max(120, (widthPx ?? 480) * 0.9);
         const chars = Math.max(1, (label || '').length);
@@ -605,11 +620,9 @@ export default function App() {
 
     function updateOverlayForSelected() {
         const ids = selectedIdsRef.current;
-        if (!ids || ids.length === 0) { setHoverOverlay(null); return; }
+        if (!ids || ids.length === 0) { setSelectedOverlay(null); return; }
         const id = ids[ids.length - 1];
-        const node = nodesRef.current.find(n => n.id === id);
-        if (!node) { setHoverOverlay(null); return; }
-        scheduleHoverUpdate({ id, data: { label: (node as any)?.data?.label || id } });
+        scheduleSelectedUpdate(id);
     }
 
     const nodeTypesLocal = useMemo(() => ({
@@ -631,7 +644,7 @@ export default function App() {
             return (
                 <div className="file-node" style={{ opacity: n.dim ? 0.25 : 1 }}>
                     <div className="file-node-header label-fixed" onDoubleClick={() => onOpenFile(p)}>{n.label}</div>
-                    <div className="hover-label label-constant" style={isHover ? { opacity: 1 } : undefined}>{n.label}</div>
+                    {/* in-node hover hint removed; global overlays are used */}
                     {shouldShowCode ? (
                         <CodeCard
                             ref={codeRefs.current[p.id]}
@@ -695,15 +708,14 @@ export default function App() {
         hoverFrameRef.current = requestAnimationFrame(() => { updateHoverOverlay(nd); hoverFrameRef.current = null; });
     }
 
-    useEffect(() => {
-        const onPaneMove = (e: MouseEvent) => {
-            // If the target is not inside a node, hide overlay
-            const el = (e.target as HTMLElement | null)?.closest?.('.react-flow__node');
-            if (!el) setHoverOverlay(null);
-        };
-        document.addEventListener('mousemove', onPaneMove, { passive: true } as any);
-        return () => document.removeEventListener('mousemove', onPaneMove as any);
-    }, []);
+    // Throttle selected overlay updates
+    const selectedFrameRef = useRef<number | null>(null);
+    function scheduleSelectedUpdate(id: string | null) {
+        if (selectedFrameRef.current != null) cancelAnimationFrame(selectedFrameRef.current);
+        selectedFrameRef.current = requestAnimationFrame(() => { updateSelectedOverlayById(id); selectedFrameRef.current = null; });
+    }
+
+    // Removed document mousemove hide; rely on node enter/leave for hover visibility
 
     return (
         <div className="root">
@@ -856,8 +868,10 @@ export default function App() {
                             // Keep overlay pinned to selected/hovered node during viewport changes
                             if (hoverOverlay) {
                                 scheduleHoverUpdate({ id: hoverOverlay.id, data: { label: hoverOverlay.label } });
-                            } else if ((selectedIdsRef.current || []).length) {
-                                updateOverlayForSelected();
+                            }
+                            if ((selectedIdsRef.current || []).length) {
+                                const id = selectedIdsRef.current[selectedIdsRef.current.length - 1];
+                                scheduleSelectedUpdate(id);
                             }
 
                             // NEW: if zoom changed at all in this gesture, mark as zoom and do not record pan samples
@@ -967,7 +981,7 @@ export default function App() {
                     elevateEdgePair(edge);
                 }}
                 onNodesChange={(changes) => setNodes((nds: any) => applyNodeChanges(changes as any, nds as any) as any)}
-                onSelectionChange={(p: any) => { const ids = (p?.nodes || []).map((n: any) => n.id); setSelectedIds(ids); if (ids.length) updateOverlayForSelected(); else setHoverOverlay(null); }}
+                onSelectionChange={(p: any) => { const ids = (p?.nodes || []).map((n: any) => n.id); setSelectedIds(ids); if (ids.length) scheduleSelectedUpdate(ids[ids.length - 1]); else setSelectedOverlay(null); }}
                 minZoom={0.02}
                 maxZoom={8}
             >
@@ -975,21 +989,17 @@ export default function App() {
                 <MiniMap pannable zoomable nodeStrokeColor={(n: any): string => (n.type === 'group' ? 'transparent' : '#4f46e5')} nodeColor={(n: any): string => (n.type === 'group' ? 'transparent' : '#4f46e5')} />
                 <Controls />
             </ReactFlow>
-            {/* Global hover overlay rendered above canvas to avoid clipping */}
-            {hoverOverlay && (() => {
-                const style: React.CSSProperties = {
-                    position: 'fixed',
-                    left: hoverOverlay.x,
-                    top: hoverOverlay.y,
-                    pointerEvents: 'none',
-                    zIndex: 2147483647
-                } as any;
-                return (
-                    <div style={style} className="label-constant">
-                        {hoverOverlay.label}
-                    </div>
-                );
-            })()}
+            {/* Global overlays rendered above canvas to avoid clipping */}
+            {hoverOverlay && (
+                <div style={{ position: 'fixed', left: hoverOverlay.x, top: hoverOverlay.y, pointerEvents: 'none', zIndex: 2147483647 }} className="label-constant">
+                    {hoverOverlay.label}
+                </div>
+            )}
+            {selectedOverlay && (
+                <div style={{ position: 'fixed', left: selectedOverlay.x, top: selectedOverlay.y, pointerEvents: 'none', zIndex: 2147483647 }} className="label-constant">
+                    {selectedOverlay.label}
+                </div>
+            )}
             {progress && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none', fontSize: 14, opacity: .8 }}>⚙ {progress}</div>}
             {emptyMsg && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', fontSize: 14, opacity: .8 }}>{emptyMsg}</div>}
         </div>
