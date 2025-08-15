@@ -173,6 +173,7 @@ pre.hljs.wrap {
     color: #94a3b8;
     font-size: 12px;
     opacity: 0.9;
+    cursor: grab;
 }
 
 .node-placeholder-title {
@@ -394,21 +395,21 @@ pre.hljs.wrap {
 
 /* Constant-size hover label that ignores viewport zoom */
 .label-constant {
-    position: absolute;
-    inset: 8px auto auto 8px;
-    padding: calc(6px / var(--rf-zoom, 1)) calc(10px / var(--rf-zoom, 1));
-    font-size: calc(14px / var(--rf-zoom, 1));
-    /* counteract zoom to stay constant visual size */
+    position: fixed;
+    inset: auto auto auto auto;
+    padding: 6px 10px;
+    font-size: 14px;
     line-height: 1.2;
     font-weight: 800;
     background: rgba(2, 6, 23, 0.85);
-    border: calc(1px / var(--rf-zoom, 1)) solid rgba(99, 102, 241, 0.6);
-    border-radius: calc(8px / var(--rf-zoom, 1));
+    border: 1px solid rgba(99, 102, 241, 0.6);
+    border-radius: 8px;
     color: #e5e7eb;
     pointer-events: none;
-    opacity: 0;
+    opacity: 1;
     transform: translateZ(0);
     transition: opacity 120ms var(--ease-smooth), transform 120ms var(--ease-smooth);
+    z-index: 2147483646;
 }
 
 /* Show on hover or focus */
@@ -428,4 +429,9 @@ pre.hljs.wrap {
 .group-label {
     top: 14px;
     left: 18px;
+}
+
+/* Remove in-node label-constant visibility reliance; global overlay handles hover */
+.react-flow__node .label-constant {
+    display: none;
 }

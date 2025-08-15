@@ -172,7 +172,7 @@ export default function App() {
                 const selected = (graph.nodes || []).filter((n: any) => n.type === 'file' && (n.path || '').startsWith(folder));
                 setNodes(prev => selected.map((n: any, i: number) => ({
                     id: n.id, type: n.type, position: { x: (i % 3) * 1200, y: Math.floor(i / 3) * 1000 },
-                    parentNode: n.parentNode, style: computeStyleFromContent(codeCacheRef.current[n.path] || ''), dragHandle: '.file-node-header', data: { label: n.label, preview: (<div className="preview">{n.path}</div>), path: n.path, lang: n.lang }
+                    parentNode: n.parentNode, style: computeStyleFromContent(codeCacheRef.current[n.path] || ''), dragHandle: '.file-node-header, .node-placeholder-body', data: { label: n.label, preview: (<div className="preview">{n.path}</div>), path: n.path, lang: n.lang }
                 })));
                 const paths = selected.map((n: any) => n.path);
                 if (paths.length) startCodeLoadBatch(paths);
@@ -189,7 +189,7 @@ export default function App() {
             position: { x: 0, y: 0 },
             parentNode: n.parentNode,
             extent: n.type === 'file' && n.parentNode ? 'parent' : undefined,
-            dragHandle: n.type === 'file' ? '.file-node-header' : undefined,
+            dragHandle: n.type === 'file' ? '.file-node-header, .node-placeholder-body' : undefined,
             data: n.type === 'file'
                 ? { label: n.label, preview: (<div className="preview">{n.path}</div>), path: n.path, lang: n.lang }
                 : { label: n.label },
@@ -230,7 +230,7 @@ export default function App() {
                     parentNode: n.parentNode,
                     extent: n.type === 'file' && n.parentNode ? 'parent' : undefined,
                     style: n.type === 'group' ? { width: 300, height: 200 } : computeStyleFromContent(codeCacheRef.current[n.path] || ''),
-                    dragHandle: n.type === 'file' ? '.file-node-header' : undefined,
+                    dragHandle: n.type === 'file' ? '.file-node-header, .node-placeholder-body' : undefined,
                     data: n.type === 'file'
                         ? { label: n.label, preview: <div className="preview">{n.path}</div>, path: n.path, lang: n.lang }
                         : { label: n.label },
@@ -259,7 +259,7 @@ export default function App() {
                     parentNode: n.parentNode,
                     extent: n.parentNode ? 'parent' : undefined,
                     style: { width: 480, height: 280 },
-                    dragHandle: '.file-node-header',
+                    dragHandle: '.file-node-header, .node-placeholder-body',
                     data: { label: n.label, preview: <div className="preview">{n.path}</div>, path: n.path, lang: n.lang },
                     zIndex: 1,
                 }));
@@ -520,6 +520,50 @@ export default function App() {
         return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
     }, []);
 
+    useEffect(() => {
+        const onDelete = (e: KeyboardEvent) => {
+            if (e.key === 'Delete') {
+                e.preventDefault();
+                const currentNodes = nodesRef.current;
+                const selected = new Set(selectedIds);
+                if (selected.size === 0) return;
+
+                const selectedGroupIds = new Set(
+                    currentNodes.filter(n => selected.has(n.id) && (n as any).type === 'group').map(n => n.id)
+                );
+
+                const idsToRemove = new Set<string>();
+                for (const gid of selectedGroupIds) idsToRemove.add(gid);
+
+                const stack: string[] = Array.from(selectedGroupIds);
+                while (stack.length) {
+                    const gid = stack.pop()!;
+                    for (const n of currentNodes) {
+                        const parent = (n as any).parentNode as string | undefined;
+                        if (parent === gid && !idsToRemove.has(n.id)) {
+                            idsToRemove.add(n.id);
+                            if ((n as any).type === 'group') stack.push(n.id);
+                        }
+                    }
+                }
+
+                for (const id of selected) {
+                    if (!idsToRemove.has(id)) idsToRemove.add(id);
+                }
+
+                if (idsToRemove.size === 0) return;
+
+                setNodes(prev => prev.filter(n => !idsToRemove.has(n.id)) as any);
+                setEdges(prev => prev.filter(e => !idsToRemove.has(e.source) && !idsToRemove.has(e.target)));
+                setSelectedIds([]);
+
+                scheduleAutoLayout();
+            }
+        };
+        window.addEventListener('keydown', onDelete);
+        return () => window.removeEventListener('keydown', onDelete);
+    }, [selectedIds]);
+
     // render code previews lazily inside each node
 
     const VISIBLE_ZOOM_THRESHOLD = 0.65; // below this, render placeholder
@@ -528,6 +572,8 @@ export default function App() {
     const hoveredIdsRef = useRef<Set<string>>(new Set());
     const [hoveredIds, setHoveredIds] = useState<Set<string>>(new Set());
     const [hoverOverlay, setHoverOverlay] = useState<{ id: string; label: string; x: number; y: number } | null>(null);
+    const selectedIdsRef = useRef<string[]>([]);
+    useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
 
     function setHovered(id: string | null, on: boolean) {
         const next = new Set(hoveredIdsRef.current);
@@ -555,6 +601,15 @@ export default function App() {
         const chars = Math.max(1, (label || '').length);
         const px = Math.min(96, Math.max(18, Math.floor(width / (chars * 0.55))));
         return px;
+    }
+
+    function updateOverlayForSelected() {
+        const ids = selectedIdsRef.current;
+        if (!ids || ids.length === 0) { setHoverOverlay(null); return; }
+        const id = ids[ids.length - 1];
+        const node = nodesRef.current.find(n => n.id === id);
+        if (!node) { setHoverOverlay(null); return; }
+        scheduleHoverUpdate({ id, data: { label: (node as any)?.data?.label || id } });
     }
 
     const nodeTypesLocal = useMemo(() => ({
@@ -596,7 +651,7 @@ export default function App() {
                             }}
                         />
                     ) : (
-                        <div className="node-placeholder-body">
+                        <div className="node-placeholder-body" data-label={n.label}>
                             <div className="node-placeholder-title" style={{ fontSize: placeholderSize }}>{n.label}</div>
                             <div style={{ opacity: 0.75 }}>Zoom in to view code</div>
                         </div>
@@ -633,6 +688,23 @@ export default function App() {
         },
     }), [edges, zoomOk, wrap, hoveredIds]);
 
+    // Throttle hover overlay updates to animation frame
+    const hoverFrameRef = useRef<number | null>(null);
+    function scheduleHoverUpdate(nd: any | null) {
+        if (hoverFrameRef.current != null) cancelAnimationFrame(hoverFrameRef.current);
+        hoverFrameRef.current = requestAnimationFrame(() => { updateHoverOverlay(nd); hoverFrameRef.current = null; });
+    }
+
+    useEffect(() => {
+        const onPaneMove = (e: MouseEvent) => {
+            // If the target is not inside a node, hide overlay
+            const el = (e.target as HTMLElement | null)?.closest?.('.react-flow__node');
+            if (!el) setHoverOverlay(null);
+        };
+        document.addEventListener('mousemove', onPaneMove, { passive: true } as any);
+        return () => document.removeEventListener('mousemove', onPaneMove as any);
+    }, []);
+
     return (
         <div className="root">
             <div className="toolbar">
@@ -650,14 +722,34 @@ export default function App() {
             </div>
             <ReactFlow
                 nodes={nodes as any}
-                edges={showEdges ? (focusIds ? (edges as any[]).filter(e => focusIds.has(e.source) && focusIds.has(e.target)) : edges) : []}
+                edges={((): any => {
+                    const base = showEdges ? (focusIds ? (edges as any[]).filter(e => focusIds.has(e.source) && focusIds.has(e.target)) : edges) : [];
+                    if (selectedIds.length === 0) return base;
+                    const selectedSet = new Set(selectedIds);
+                    const nodesMap = new Map(nodesRef.current.map((n: any) => [n.id, n]));
+                    const isDescendantOfSelectedGroup = (id: string): boolean => {
+                        let current: any = nodesMap.get(id);
+                        let guard = 0;
+                        while (current && current.parentNode && guard++ < 1000) {
+                            if (selectedSet.has(current.parentNode)) return true;
+                            current = nodesMap.get(current.parentNode);
+                        }
+                        return false;
+                    };
+                    return (base as any[]).map(e => (
+                        selectedSet.has(e.source) ||
+                        selectedSet.has(e.target) ||
+                        isDescendantOfSelectedGroup(e.source) ||
+                        isDescendantOfSelectedGroup(e.target)
+                    ) ? { ...e, style: { ...(e.style || {}), stroke: '#a78bfa', strokeWidth: 2 } } : e);
+                })()}
                 nodeTypes={nodeTypesLocal as any}
                 panOnDrag={[1, 2]} /* left or middle mouse */
                 panOnScroll={true}
                 selectionOnDrag
-                onNodeMouseEnter={(_e, nd) => { setHovered(nd.id, true); updateHoverOverlay(nd); }}
-                onNodeMouseMove={(_e, nd) => { if (hoveredIds.has(nd.id)) updateHoverOverlay(nd); }}
-                onNodeMouseLeave={(_e, nd) => { setHovered(nd.id, false); updateHoverOverlay(null); }}
+                onNodeMouseEnter={(_e, nd) => { setHovered(nd.id, true); scheduleHoverUpdate(nd); }}
+                onNodeMouseMove={(_e, nd) => { scheduleHoverUpdate(nd); }}
+                onNodeMouseLeave={(_e, nd) => { setHovered(nd.id, false); scheduleHoverUpdate(null); }}
                 onlyRenderVisibleElements
                 onInit={(inst) => {
                     rfInstanceRef.current = inst;
@@ -761,6 +853,12 @@ export default function App() {
 
                             viewportRef.current = { x: latest.x, y: latest.y, zoom: latest.zoom };
                             prevVpRef.current = { x: latest.x, y: latest.y, zoom: latest.zoom }; // NEW
+                            // Keep overlay pinned to selected/hovered node during viewport changes
+                            if (hoverOverlay) {
+                                scheduleHoverUpdate({ id: hoverOverlay.id, data: { label: hoverOverlay.label } });
+                            } else if ((selectedIdsRef.current || []).length) {
+                                updateOverlayForSelected();
+                            }
 
                             // NEW: if zoom changed at all in this gesture, mark as zoom and do not record pan samples
                             if (Math.abs(dz) > ZOOM_EPS) {
@@ -868,8 +966,8 @@ export default function App() {
                     }
                     elevateEdgePair(edge);
                 }}
-                onSelectionChange={(p: any) => setSelectedIds((p?.nodes || []).map((n: any) => n.id))}
                 onNodesChange={(changes) => setNodes((nds: any) => applyNodeChanges(changes as any, nds as any) as any)}
+                onSelectionChange={(p: any) => { const ids = (p?.nodes || []).map((n: any) => n.id); setSelectedIds(ids); if (ids.length) updateOverlayForSelected(); else setHoverOverlay(null); }}
                 minZoom={0.02}
                 maxZoom={8}
             >
@@ -878,11 +976,20 @@ export default function App() {
                 <Controls />
             </ReactFlow>
             {/* Global hover overlay rendered above canvas to avoid clipping */}
-            {hoverOverlay && (
-                <div style={{ position: 'fixed', left: hoverOverlay.x, top: hoverOverlay.y, pointerEvents: 'none', zIndex: 9999 }} className="label-constant">
-                    {hoverOverlay.label}
-                </div>
-            )}
+            {hoverOverlay && (() => {
+                const style: React.CSSProperties = {
+                    position: 'fixed',
+                    left: hoverOverlay.x,
+                    top: hoverOverlay.y,
+                    pointerEvents: 'none',
+                    zIndex: 2147483647
+                } as any;
+                return (
+                    <div style={style} className="label-constant">
+                        {hoverOverlay.label}
+                    </div>
+                );
+            })()}
             {progress && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none', fontSize: 14, opacity: .8 }}>⚙ {progress}</div>}
             {emptyMsg && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', fontSize: 14, opacity: .8 }}>{emptyMsg}</div>}
         </div>
