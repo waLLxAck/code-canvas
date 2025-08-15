@@ -733,7 +733,20 @@ export default function App() {
                 {focusIds ? (<button onClick={clearFocus}>Clear Focus</button>) : null}
             </div>
             <ReactFlow
-                nodes={nodes as any}
+                nodes={((): any => {
+                    if (selectedIds.length === 0) return nodes as any;
+                    const selectedSet = new Set(selectedIds);
+                    const linked = new Set<string>();
+                    for (const e of edges as any[]) {
+                        if (selectedSet.has(e.source)) linked.add(e.target);
+                        if (selectedSet.has(e.target)) linked.add(e.source);
+                    }
+                    // Always include the selected nodes themselves
+                    for (const id of selectedSet) linked.add(id);
+                    return (nodes as any[]).map(n => linked.has(n.id)
+                        ? { ...n, className: `${(n as any).className ? (n as any).className + ' ' : ''}node-linked` }
+                        : n);
+                })()}
                 edges={((): any => {
                     const base = showEdges ? (focusIds ? (edges as any[]).filter(e => focusIds.has(e.source) && focusIds.has(e.target)) : edges) : [];
                     if (selectedIds.length === 0) return base;
@@ -753,7 +766,7 @@ export default function App() {
                         selectedSet.has(e.target) ||
                         isDescendantOfSelectedGroup(e.source) ||
                         isDescendantOfSelectedGroup(e.target)
-                    ) ? { ...e, style: { ...(e.style || {}), stroke: '#a78bfa', strokeWidth: 2 } } : e);
+                    ) ? { ...e, style: { ...(e.style || {}), stroke: '#a78bfa' }, className: `${(e as any).className ? (e as any).className + ' ' : ''}edge-linked` } : e);
                 })()}
                 nodeTypes={nodeTypesLocal as any}
                 panOnDrag={[1, 2]} /* left or middle mouse */

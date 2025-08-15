@@ -278,7 +278,7 @@ pre.hljs.wrap {
     content: '';
     position: absolute;
     inset: 0;
-    border: 2px solid rgba(99, 102, 241, 0.55);
+    border: 3px solid rgba(99, 102, 241, 0.75);
     border-radius: 12px;
     pointer-events: none;
 }
@@ -385,7 +385,7 @@ pre.hljs.wrap {
 
 /* Stronger selected visuals on containers */
 .react-flow__node.selected .file-node {
-    box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.7) inset, 0 0 18px rgba(167, 139, 250, 0.35);
+    box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.9) inset, 0 0 24px rgba(167, 139, 250, 0.45);
 }
 
 .react-flow__node.selected.react-flow__node-group {
@@ -434,4 +434,88 @@ pre.hljs.wrap {
 /* Remove in-node label-constant visibility reliance; global overlay handles hover */
 .react-flow__node .label-constant {
     display: none;
+}
+
+/* Edge visibility and selection emphasis */
+.react-flow__edge .react-flow__edge-path {
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+/* Hover emphasis on edges for quicker targeting */
+.react-flow__edge:hover .react-flow__edge-path {
+    stroke-width: 3 !important;
+}
+
+/* Selected edge: thicker line, brighter color, subtle glow */
+.react-flow__edge.selected .react-flow__edge-path {
+    stroke: #a78bfa !important;
+    stroke-width: 5 !important;
+    filter: drop-shadow(0 0 6px rgba(167, 139, 250, 0.65)) drop-shadow(0 0 2px rgba(167, 139, 250, 0.8));
+}
+
+/* Improve visibility when a connected node is hovered/selected (ReactFlow applies .selected on nodes) */
+.react-flow__node:hover ~ .react-flow__edges path,
+.react-flow__node.selected ~ .react-flow__edges path {
+    stroke-linecap: round;
+}
+
+/* Accessibility: stronger emphasis when user requests more contrast */
+@media (prefers-contrast: more) {
+    .react-flow__edge.selected .react-flow__edge-path {
+        stroke-width: 7 !important;
+    }
+    .react-flow__node.selected .file-node {
+        box-shadow: 0 0 0 4px rgba(167, 139, 250, 0.95) inset, 0 0 28px rgba(167, 139, 250, 0.55);
+    }
+}
+
+/* Windows High Contrast mode support */
+@media (forced-colors: active) {
+    .react-flow__edge.selected .react-flow__edge-path {
+        forced-color-adjust: none;
+        stroke: Highlight !important;
+    }
+    .react-flow__node.selected .file-node {
+        forced-color-adjust: none;
+        outline: 3px solid Highlight;
+        outline-offset: 2px;
+    }
+}
+
+/* Linked node emphasis (selected or connected to selected) */
+.react-flow__node.node-linked .file-node,
+.react-flow__node.selected .file-node {
+    box-shadow: 0 0 0 calc(3px * max(1, 1 / var(--rf-zoom, 1))) rgba(167, 139, 250, 0.9) inset,
+        0 0 calc(24px * max(1, 1 / var(--rf-zoom, 1))) rgba(167, 139, 250, 0.45);
+}
+
+/* Also boost label contrast for linked nodes */
+.react-flow__node.node-linked .file-node-header.label-fixed,
+.react-flow__node.node-linked .group-label.label-fixed {
+    color: #fafafa;
+    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+/* Zoom-compensated edge thickness for linked edges */
+.react-flow__edge.edge-linked .react-flow__edge-path {
+    stroke-width: calc(4px * max(1, 1 / var(--rf-zoom, 1))) !important;
+    filter: drop-shadow(0 0 calc(6px * max(1, 1 / var(--rf-zoom, 1))) rgba(167, 139, 250, 0.6));
+}
+
+/* When very zoomed out, force a minimum thickness so edges stay visible */
+@supports (selector(:has(*))) {
+    /* No-op feature query placeholder to ensure older browsers ignore if needed */
+}
+
+/* Fallback for environments not honoring CSS var or calc: keep a decent width */
+.react-flow__edge.edge-linked .react-flow__edge-path {
+    stroke-linecap: round;
+}
+
+@media (forced-colors: active) {
+    .react-flow__node.node-linked .file-node {
+        outline: 3px solid Highlight;
+        outline-offset: 2px;
+    }
 }
