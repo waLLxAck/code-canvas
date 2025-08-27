@@ -10,6 +10,9 @@ Code Canvas is a Visual Studio Code extension that turns your workspace into an 
 - Open changed files from Git; live updates on file save and Git state changes
 - Jump to definition and fetch references via VS Code LSP
 
+## Status & Disclaimer
+This project is provided as-is with many known and unknown bugs. I open-sourced it so the community can build on it and take it further. I don’t have time to actively maintain it. Use at your own risk; contributions are very welcome.
+
 
 ## Requirements
 - Node.js 18+ (Vite 7 requires Node 18 or newer)
@@ -184,7 +187,7 @@ Tip: For a webview build watch, run `npx vite build --watch` inside `webview/`.
 
 
 ## License
-ISC
+MIT — free to use, modify, and distribute. See the `LICENSE` file for details.
 
 
 ## Acknowledgements
