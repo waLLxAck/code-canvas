@@ -1,2 +1,4 @@
-/final_review_gate.py
 node_modules
+.vscode
+webview/node_modules
+extension/dist
